@@ -1,4 +1,4 @@
-# SauceBot — Automated Sauce Dispenser
+# AutoSauce — Automated Sauce Dispenser
 
 Capstone project. A Raspberry Pi touchscreen kiosk that lets a user select
 a sauce coverage level (light / medium / heavy), then automates a full
@@ -27,7 +27,7 @@ Arduino (optional, add later if real-time control is needed)
 ## Project Structure
 
 ```
-saucebot/
+AutoSauce/
 ├── main.py                        # Entry point — run this
 ├── ui/                            # Static web UI (HTML/CSS/JS)
 │   ├── index.html
@@ -89,13 +89,13 @@ Open two terminals.
 
 **Terminal 1 — start the Python server:**
 ```bash
-cd ~/saucebot
+cd ~/sau
 python main.py
 ```
 
 **Terminal 2 — launch Chromium kiosk:**
 ```bash
-cd ~/saucebot/ui
+cd ~/AutoSauce/ui
 bash launch.sh
 ```
 
@@ -105,13 +105,13 @@ instructions at the bottom of `ui/launch.sh`.
 ### On Windows (development / testing)
 **Terminal 1 — start the Python server:**
 ```bash
-cd saucebot
+cd AutoSauce
 python main.py
 ```
 
 **Terminal 2 — launch browser:**
 ```bash
-cd saucebot/ui
+cd AutoSauce/ui
 launch.bat
 ```
 Or just open `http://localhost:8080/ui` in any browser manually.
@@ -119,7 +119,7 @@ Or just open `http://localhost:8080/ui` in any browser manually.
 ### Headless (no browser, terminal only)
 Useful for testing the motion sequence without a display:
 ```bash
-cd saucebot
+cd AutoSauce
 python -c "
 import time
 from pi.ordering.order_manager import OrderManager, OrderStatus
@@ -267,7 +267,7 @@ The motion sequence itself does not change.
 |-------|-------|-----|
 | `No module named 'fastapi'` | Package not installed | `pip install fastapi uvicorn` |
 | `Address already in use` | Server already running on port 8080 | Kill the old process: `pkill -f main.py` |
-| `No module named 'pi'` | Wrong working directory | Run from the `saucebot/` folder, not inside `pi/` |
+| `No module named 'pi'` | Wrong working directory | Run from the `AutoSauce/` folder, not inside `pi/` |
 | `Unknown coverage level` | UI sent wrong level string | Check `COVERAGE_PROFILES` keys in `sauce_config.py` |
 | Chromium shows blank page | Server not running | Start `python main.py` first |
 
