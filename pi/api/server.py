@@ -80,7 +80,7 @@ def dispense(req: DispenseRequest):
     Queues a new order and returns an order_id immediately.
     The UI then polls /api/status/{order_id} until status is DONE or FAILED.
     """
-    log.info(f"API: dispense request — level='{req.level}'")
+    log.info(f"API: received '{req.level}' — sending to order manager")
 
     try:
         order_id = get_order_manager().submit_order(req.level)
