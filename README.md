@@ -61,7 +61,7 @@ Python 3.10 or higher
 fastapi
 uvicorn
 ```
-
+TODO: update install commands*
 Install everything in one command:
 ```bash
 pip install fastapi uvicorn
@@ -72,7 +72,7 @@ On Raspberry Pi if you get a permissions error:
 pip install fastapi uvicorn --break-system-packages
 ```
 
-### System packages (Raspberry Pi only)
+### System packages (Raspberry Pi only) - UPDATE
 Chromium is used as the kiosk browser. Install if not already present:
 ```bash
 sudo apt update
@@ -311,7 +311,7 @@ The authenticity of host '172.28.85.104' can't be established.
 Are you sure you want to continue connecting? (yes/no): yes
 ```
  
-### 6. Useful SSH tips
+### 4. Useful SSH tips
  
 Keep the Pi's IP stable — assign it a static IP in your router settings
 so it doesn't change between reboots. Look for "DHCP reservation" or
