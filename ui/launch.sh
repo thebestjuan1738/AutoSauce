@@ -41,6 +41,7 @@ sleep 2
 # --disable-infobars : hide "Chrome is being controlled" bar
 # --touch-events     : enable touch input
 # --no-first-run     : skip first-run wizard
+export DISPLAY=:0
 chromium-browser \
     --kiosk \
     --noerrdialogs \
