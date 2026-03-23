@@ -1,38 +1,31 @@
-﻿/**
- * script.js ï¿½ Sauce Dispenser UI Logic  v2
+/**
+ * script.js — Sauce Dispenser UI Logic  v3
  *
- * Responsibilities:
- *  - Track selected sauce quantity
- *  - Drive button active / dimmed states
- *  - Animate status display on selection change
- *  - Manage START button enabled state and label
- *  - Show dispensing overlay with spinner + progress bar
- *  - Reset UI cleanly after dispense completes
- *
- * Raspberry Pi integration point:
- *  Search for "TODO (GPIO)" to find where to add your fetch() / WebSocket call.
+ * Changes from v2:
+ *   - START button now calls POST /api/dispense instead of a fake timer
+ *   - Polls GET /api/status/{order_id} every second until DONE or FAILED
+ *   - Overlay stays up for exactly as long as the machine is running
+ *   - Shows a real error message if something goes wrong on the Pi side
  */
 
 /* -----------------------------------------------
    Configuration
------------------------------------------------- */
+----------------------------------------------- */
 
-/** Total time (ms) the dispensing overlay is shown before auto-reset. */
-const DISPENSE_DURATION_MS = 2800;
+const API_BASE       = "http://localhost:8080";
+const POLL_INTERVAL  = 1000;   // ms between status polls
 
 /* -----------------------------------------------
    State
------------------------------------------------- */
+----------------------------------------------- */
 
-/** Currently selected quantity label, or null if nothing chosen. */
 let selectedQuantity = null;
-
-/** Timer handle for hiding the overlay. */
-let dispenseTimer = null;
+let dispenseTimer    = null;
+let pollInterval     = null;
 
 /* -----------------------------------------------
    Element references
------------------------------------------------- */
+----------------------------------------------- */
 
 const quantityButtons = document.querySelectorAll('.qty-btn');
 const startButton     = document.getElementById('start-btn');
@@ -41,54 +34,40 @@ const messageOverlay  = document.getElementById('message-overlay');
 const messageText     = document.getElementById('message-text');
 const progressFill    = document.getElementById('progress-fill');
 
-
-
 /* -----------------------------------------------
-   Quantity button logic
------------------------------------------------- */
+   Quantity button logic  (unchanged from v2)
+----------------------------------------------- */
 
-/**
- * Handle a tap on a quantity button.
- * Updates state, button visuals, status box, and START button.
- */
 function handleQuantitySelect(event) {
   const button = event.currentTarget;
-  const value  = button.dataset.value;  // 'Light' | 'Medium' | 'Heavy'
+  const value  = button.dataset.value;
 
-  // No-op if already selected (avoids unnecessary re-renders)
   if (value === selectedQuantity) return;
-
   selectedQuantity = value;
 
-  // Update button visual states
   quantityButtons.forEach(btn => {
     const isSelected = btn.dataset.value === value;
-    btn.classList.toggle('active',  isSelected);
-    btn.classList.toggle('dimmed', !isSelected);
+    btn.classList.toggle('active',   isSelected);
+    btn.classList.toggle('dimmed',  !isSelected);
     btn.setAttribute('aria-pressed', String(isSelected));
   });
 
-  // Enable START button
   enableStartButton();
-
-  console.log(`[Sauce Dispenser] Quantity selected: ${selectedQuantity}`);
+  console.log(`[SauceBot] Quantity selected: ${selectedQuantity}`);
 }
 
-// Attach listeners
 quantityButtons.forEach(btn => btn.addEventListener('click', handleQuantitySelect));
 
 /* -----------------------------------------------
-   START button state management
------------------------------------------------- */
+   START button state
+----------------------------------------------- */
 
-/** Activate the START button -- called when a quantity is chosen. */
 function enableStartButton() {
   startButton.disabled = false;
   startButton.setAttribute('aria-disabled', 'false');
   startLabel.textContent = 'START';
 }
 
-/** Deactivate the START button -- called on reset or during dispense. */
 function disableStartButton() {
   startButton.disabled = true;
   startButton.setAttribute('aria-disabled', 'true');
@@ -96,95 +75,143 @@ function disableStartButton() {
 }
 
 /* -----------------------------------------------
-   START button press handler
------------------------------------------------- */
+   START button — now calls the real API
+----------------------------------------------- */
 
-startButton.addEventListener('click', function () {
-  if (!selectedQuantity) {
-    console.warn('[Sauce Dispenser] START pressed with no quantity selected.');
-    return;
-  }
+startButton.addEventListener('click', async function () {
+  if (!selectedQuantity) return;
 
-  const quantity = selectedQuantity;
-
-  // Log to console
-  // TODO (GPIO): Replace this log with your Raspberry Pi API call, e.g.:
-  //   fetch('/api/dispense', { method: 'POST', body: JSON.stringify({ quantity }) });
-  console.log('[Sauce Dispenser] Dispensing ' + quantity + ' sauce...');
-
-  // Flash animation on the button
+  // Flash animation
   startButton.classList.add('flash');
   startButton.addEventListener('animationend', () => {
     startButton.classList.remove('flash');
   }, { once: true });
 
-  // Lock controls while dispensing
+  // Lock controls
   setControlsEnabled(false);
 
-  // Show overlay
-  showDispensingOverlay(quantity);
+  // Show overlay in "waiting" state while we contact the server
+  showOverlay('Connecting...');
+
+  try {
+    // ── Step 1: Submit the order ──────────────────────────────
+    const response = await fetch(`${API_BASE}/api/dispense`, {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({ level: selectedQuantity.toLowerCase() }),
+    });
+
+    if (!response.ok) {
+      const err = await response.json();
+      throw new Error(err.detail || 'Server error');
+    }
+
+    const { order_id } = await response.json();
+    console.log(`[SauceBot] Order submitted: ${order_id}`);
+
+    // ── Step 2: Update overlay and start polling ──────────────
+    showOverlay(`Dispensing ${selectedQuantity} sauce...`);
+    startPolling(order_id);
+
+  } catch (err) {
+    console.error('[SauceBot] Failed to submit order:', err);
+    showError(`Could not reach the machine.\n${err.message}`);
+  }
 });
 
 /* -----------------------------------------------
-   Dispensing overlay
------------------------------------------------- */
+   Polling — checks order status every second
+----------------------------------------------- */
 
-/**
- * Show the full-screen dispensing overlay with spinner + progress bar.
- * @param {string} quantity ï¿½ The quantity being dispensed
- */
-function showDispensingOverlay(quantity) {
-  // Clear any leftover timer from a previous cycle
-  if (dispenseTimer) {
-    clearTimeout(dispenseTimer);
-    dispenseTimer = null;
-  }
+function startPolling(order_id) {
+  // Safety: clear any existing poll
+  stopPolling();
 
-  // Set message text
-  messageText.textContent = 'Dispensing ' + quantity + ' Sauce...';
+  pollInterval = setInterval(async () => {
+    try {
+      const response = await fetch(`${API_BASE}/api/status/${order_id}`);
 
-  // Reset and animate the progress bar
-  // Set width to 0 instantly (no transition), then animate to 100%
-  progressFill.style.transition = 'none';
-  progressFill.style.width = '0%';
+      if (!response.ok) {
+        throw new Error(`Status check failed (${response.status})`);
+      }
 
-  // Show the overlay
-  messageOverlay.classList.add('visible');
+      const data = await response.json();
+      console.log(`[SauceBot] Status: ${data.status}`);
 
-  // Start progress bar animation on next frame (after overlay is visible)
-  requestAnimationFrame(() => {
-    requestAnimationFrame(() => {
-      progressFill.style.transition = `width ${DISPENSE_DURATION_MS}ms linear`;
-      progressFill.style.width = '100%';
-    });
-  });
+      if (data.status === 'DONE') {
+        stopPolling();
+        showOverlay('Done! Enjoy your sandwich.');
+        setTimeout(() => {
+          hideOverlay();
+          resetUI();
+        }, 2000);
+      }
 
-  // Auto-dismiss after the duration
-  dispenseTimer = setTimeout(() => {
-    hideDispensingOverlay();
-    resetUI();
-  }, DISPENSE_DURATION_MS);
+      else if (data.status === 'FAILED') {
+        stopPolling();
+        showError(data.error || 'Something went wrong on the machine.');
+      }
+
+      // QUEUED or PROCESSING — keep polling
+
+    } catch (err) {
+      console.error('[SauceBot] Polling error:', err);
+      stopPolling();
+      showError(`Lost connection to machine.\n${err.message}`);
+    }
+  }, POLL_INTERVAL);
 }
 
-/** Hide the dispensing overlay. */
-function hideDispensingOverlay() {
-  messageOverlay.classList.remove('visible');
-
-  // Reset progress bar immediately (hidden, no flash)
-  progressFill.style.transition = 'none';
-  progressFill.style.width = '0%';
-
-  dispenseTimer = null;
+function stopPolling() {
+  if (pollInterval) {
+    clearInterval(pollInterval);
+    pollInterval = null;
+  }
 }
 
 /* -----------------------------------------------
-   UI helpers
------------------------------------------------- */
+   Overlay helpers
+----------------------------------------------- */
 
-/**
- * Enable or disable quantity buttons and START button.
- * @param {boolean} enabled
- */
+function showOverlay(message) {
+  messageText.textContent = message;
+  messageOverlay.classList.add('visible');
+
+  // Animate progress bar — indefinite pulse while running
+  progressFill.style.transition = 'none';
+  progressFill.style.width = '0%';
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => {
+      // Use a long duration so it fills slowly while polling
+      progressFill.style.transition = `width 30s linear`;
+      progressFill.style.width = '95%';   // Never quite reaches 100% until DONE
+    });
+  });
+}
+
+function hideOverlay() {
+  messageOverlay.classList.remove('visible');
+  progressFill.style.transition = 'none';
+  progressFill.style.width = '0%';
+}
+
+function showError(message) {
+  // Replace spinner content with an error state
+  messageText.textContent = `⚠ ${message}`;
+  progressFill.style.transition = 'none';
+  progressFill.style.width = '0%';
+
+  // Auto-dismiss after 4 seconds then reset
+  setTimeout(() => {
+    hideOverlay();
+    resetUI();
+  }, 4000);
+}
+
+/* -----------------------------------------------
+   UI helpers  (unchanged from v2)
+----------------------------------------------- */
+
 function setControlsEnabled(enabled) {
   quantityButtons.forEach(btn => { btn.disabled = !enabled; });
   if (enabled && selectedQuantity) {
@@ -194,14 +221,9 @@ function setControlsEnabled(enabled) {
   }
 }
 
-/**
- * Reset the entire UI to its initial idle state.
- * Called automatically after dispensing completes.
- */
 function resetUI() {
   selectedQuantity = null;
 
-  // Clear all button states
   quantityButtons.forEach(btn => {
     btn.classList.remove('active', 'dimmed');
     btn.setAttribute('aria-pressed', 'false');
@@ -209,6 +231,5 @@ function resetUI() {
   });
 
   disableStartButton();
-
-  console.log('[Sauce Dispenser] Ready for next dispense.');
+  console.log('[SauceBot] Ready for next order.');
 }
