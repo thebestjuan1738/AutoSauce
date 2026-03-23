@@ -273,6 +273,63 @@ The motion sequence itself does not change.
 
 ---
 
+ 
+## SSH into the Raspberry Pi
+ 
+ 
+### 1. Enable SSH on the Pi (Already Done)
+On the Pi itself, open a terminal and run:
+```bash
+sudo raspi-config
+```
+Navigate to: **Interface Options → SSH → Enable**
+ 
+Or the quick way without opening raspi-config:
+```bash
+sudo systemctl enable ssh
+sudo systemctl start ssh
+```
+ 
+### 2. Find the Pi's IP address 
+On the Pi, run:
+```bash
+hostname -I
+```
+It should return an address like 172.28.85.104
+ 
+ 
+### 3. Connect from your computer
+On Windows (PowerShell) / Mac / Linux, run:
+```bash
+ssh pi@172.28.85.104
+```
+Username: saucemachine
+Password: me424
+ 
+You'll see this warning the very first time — this is normal, type `yes`:
+```
+The authenticity of host '172.28.85.104' can't be established.
+Are you sure you want to continue connecting? (yes/no): yes
+```
+ 
+### 6. Useful SSH tips
+ 
+Keep the Pi's IP stable — assign it a static IP in your router settings
+so it doesn't change between reboots. Look for "DHCP reservation" or
+"static lease" in your router admin page and bind the Pi's MAC address
+to a fixed IP.
+ 
+Run the server in the background so it keeps going after you close SSH:
+```bash
+nohup python main.py &
+```
+To stop it later:
+```bash
+pkill -f main.py
+```
+ 
+---
+
 ## GitHub recommended workflow
 
 ```
