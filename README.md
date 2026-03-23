@@ -301,9 +301,8 @@ It should return an address like 172.28.85.104
 ### 3. Connect from your computer
 On Windows (PowerShell) / Mac / Linux, run:
 ```bash
-ssh pi@172.28.85.104
+ssh saucemachine@<ip>
 ```
-Username: saucemachine
 Password: me424
  
 You'll see this warning the very first time — this is normal, type `yes`:
