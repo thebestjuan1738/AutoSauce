@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <!-- Prevent zooming on touch devices -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
+    <title>Sauce Dispenser</title>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+
+    <div class="container">
+
+      <!-- Title -->
+      <header>
+        <h1>Sauce Dispenser</h1>
+        <p class="subtitle">Touch to select your sauce amount</p>
+      </header>
+
+      <!-- Quantity selector -->
+      <section class="quantity-section" aria-label="Sauce quantity selector">
+        <p class="section-label">How much sauce?</p>
+
+        <div class="quantity-buttons">
+
+          <!-- Light: single drop -->
+          <button class="qty-btn" id="btn-light" data-value="Light" aria-pressed="false">
+            <svg class="btn-icon" viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M12 2 C12 2 5 10 5 15 A7 7 0 0 0 19 15 C19 10 12 2 12 2 Z"
+                    fill="currentColor"/>
+            </svg>
+            <span class="btn-label">Light</span>
+            <span class="btn-sub">A little</span>
+          </button>
+
+          <!-- Medium: two drops -->
+          <button class="qty-btn" id="btn-medium" data-value="Medium" aria-pressed="false">
+            <svg class="btn-icon" viewBox="0 0 32 24" aria-hidden="true">
+              <path d="M10 2 C10 2 4 9 4 13 A6 6 0 0 0 16 13 C16 9 10 2 10 2 Z"
+                    fill="currentColor"/>
+              <path d="M22 2 C22 2 16 9 16 13 A6 6 0 0 0 28 13 C28 9 22 2 22 2 Z"
+                    fill="currentColor" opacity="0.6"/>
+            </svg>
+            <span class="btn-label">Medium</span>
+            <span class="btn-sub">Just right</span>
+          </button>
+
+          <!-- Heavy: three drops -->
+          <button class="qty-btn" id="btn-heavy" data-value="Heavy" aria-pressed="false">
+            <svg class="btn-icon" viewBox="0 0 40 24" aria-hidden="true">
+              <path d="M8 2 C8 2 3 8 3 12 A5 5 0 0 0 13 12 C13 8 8 2 8 2 Z"
+                    fill="currentColor" opacity="0.5"/>
+              <path d="M20 1 C20 1 14 8 14 13 A6 6 0 0 0 26 13 C26 8 20 1 20 1 Z"
+                    fill="currentColor"/>
+              <path d="M32 2 C32 2 27 8 27 12 A5 5 0 0 0 37 12 C37 8 32 2 32 2 Z"
+                    fill="currentColor" opacity="0.5"/>
+            </svg>
+            <span class="btn-label">Heavy</span>
+            <span class="btn-sub">Load it up</span>
+          </button>
+
+        </div>
+      </section>
+
+      <!-- Start button -->
+      <section class="start-section">
+        <button class="start-btn" id="start-btn" disabled aria-disabled="true">
+          <span class="start-label" id="start-label">Select amount first</span>
+        </button>
+      </section>
+
+    </div><!-- /.container -->
+
+    <!-- Full-screen dispensing overlay -->
+    <div class="message-overlay" id="message-overlay" role="status" aria-live="assertive" aria-atomic="true">
+      <div class="message-card">
+        <!-- Spinning ring -->
+        <div class="spinner" aria-hidden="true">
+          <div class="spinner-ring"></div>
+        </div>
+        <!-- Message text -->
+        <p class="message-text" id="message-text">Dispensing...</p>
+        <!-- Progress bar -->
+        <div class="progress-bar" aria-hidden="true">
+          <div class="progress-fill" id="progress-fill"></div>
+        </div>
+      </div>
+    </div>
+
+    <script src="script.js"></script>
+  </body>
+</html>
