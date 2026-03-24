@@ -27,10 +27,10 @@ if command -v unclutter &> /dev/null; then
 fi
 
 # ── Start Python HTTP server in the background ──────────────
-cd "$SITE_DIR"
-python3 -m http.server $PORT &
-SERVER_PID=$!
-echo " HTTP server PID: $SERVER_PID"
+#cd "$SITE_DIR"
+#python3 -m http.server $PORT &
+#SERVER_PID=$!
+#echo " HTTP server PID: $SERVER_PID"
 
 # Give the server a moment to start
 sleep 2
@@ -42,7 +42,7 @@ sleep 2
 # --touch-events     : enable touch input
 # --no-first-run     : skip first-run wizard
 export DISPLAY=:0
-chromium-browser \
+chromium \
     --kiosk \
     --noerrdialogs \
     --disable-infobars \
@@ -72,9 +72,9 @@ echo " Done."
 #
 #  [Service]
 #  Type=simple
-#  User=pi
+#  User=saucemachine
 #  Environment=DISPLAY=:0
-#  ExecStart=/home/pi/sauceWebsite/launch.sh
+#  ExecStart=/home/AutoSauce/ui/launch.sh
 #  Restart=on-failure
 #
 #  [Install]

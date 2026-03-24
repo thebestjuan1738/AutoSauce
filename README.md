@@ -428,3 +428,58 @@ git merge feature/gpio-gantry-driver
 git checkout main
 git merge develop
 ```
+
+---
+
+## Running with systemd services and Docker (Recommended for deployment)
+
+This project now supports running the backend (API server) and UI (Chromium kiosk) as separate services using systemd and Docker.
+
+### 1. Build the backend Docker image
+```bash
+cd ~/AutoSauce
+sudo docker build -t saucebot-backend .
+```
+
+### 2. Make launch scripts executable
+```bash
+chmod +x ui/launch-ui.sh ui/launch-backend.sh
+```
+
+### 3. Copy and enable the systemd service files
+```bash
+sudo cp ui/sauce-backend.service /etc/systemd/system/
+sudo cp ui/sauce-ui.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable sauce-backend
+sudo systemctl enable sauce-ui
+```
+
+### 4. Start the services
+```bash
+sudo systemctl start sauce-backend
+sudo systemctl start sauce-ui
+```
+
+- The backend will run in Docker and listen on port 8080.
+- The UI will launch Chromium in kiosk mode on the Pi's display.
+
+### 5. Checking logs
+- For backend (Docker):
+  ```bash
+  sudo docker logs saucebot-backend
+  sudo docker logs -f saucebot-backend  # follow live
+  ```
+- For systemd services:
+  ```bash
+  sudo journalctl -u sauce-backend -e
+  sudo journalctl -u sauce-ui -e
+  ```
+
+### 6. Stopping and disabling services
+```bash
+sudo systemctl stop sauce-backend
+sudo systemctl stop sauce-ui
+sudo systemctl disable sauce-backend
+sudo systemctl disable sauce-ui
+```
