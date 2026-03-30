@@ -59,6 +59,21 @@ function handleQuantitySelect(event) {
 quantityButtons.forEach(btn => btn.addEventListener('click', handleQuantitySelect));
 
 /* -----------------------------------------------
+   Serial helpers — fire-and-forget, never blocks main flow
+----------------------------------------------- */
+
+async function sendSerialCommand(endpoint) {
+  try {
+    const res = await fetch(`${API_BASE}${endpoint}`, { method: 'POST' });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);
+    console.log(`[SauceBot] Serial ${endpoint}: ${data.arduino_response}`);
+  } catch (err) {
+    console.warn(`[SauceBot] Serial command ${endpoint} failed:`, err.message);
+  }
+}
+
+/* -----------------------------------------------
    START button state
 ----------------------------------------------- */
 
@@ -109,7 +124,8 @@ startButton.addEventListener('click', async function () {
     const { order_id } = await response.json();
     console.log(`[SauceBot] Order submitted: ${order_id}`);
 
-    // ── Step 2: Update overlay and start polling ──────────────
+    // ── Step 2: Turn on Arduino LED, update overlay, start polling ──
+    sendSerialCommand('/sauce/start');
     showOverlay(`Dispensing ${selectedQuantity} sauce...`);
     startPolling(order_id);
 
@@ -140,6 +156,7 @@ function startPolling(order_id) {
 
       if (data.status === 'DONE') {
         stopPolling();
+        sendSerialCommand('/sauce/stop');
         // Snap bar to 100% before showing completion message
         progressFill.style.transition = 'width 0.3s ease';
         progressFill.style.width = '100%';
@@ -152,6 +169,7 @@ function startPolling(order_id) {
 
       else if (data.status === 'FAILED') {
         stopPolling();
+        sendSerialCommand('/sauce/stop');
         showError(data.error || 'Something went wrong on the machine.');
       }
 
@@ -160,6 +178,7 @@ function startPolling(order_id) {
     } catch (err) {
       console.error('[SauceBot] Polling error:', err);
       stopPolling();
+      sendSerialCommand('/sauce/stop');
       showError(`Lost connection to machine.\n${err.message}`);
     }
   }, POLL_INTERVAL);

@@ -15,6 +15,12 @@ The UI (Chromium) talks to this on localhost:8080.
 This server talks to order_manager directly as a Python function call.
 """
 
+import os
+import threading
+import time
+
+import serial
+import serial.serialutil
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -39,9 +45,64 @@ app.add_middleware(
 
 # Serve the UI static files at the root
 # So http://localhost:8080/ loads index.html automatically
-import os
 ui_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../ui'))
 app.mount("/ui", StaticFiles(directory=ui_dir, html=True), name="ui")
+
+# ─── Serial (Arduino) ───────────────────────────────────────────────────────
+
+import sys
+_SERIAL_PORT    = "COM3" if sys.platform == "win32" else "/dev/ttyACM0"
+_SERIAL_BAUD    = 9600
+_SERIAL_TIMEOUT = 2.0   # seconds to wait for Arduino response line
+_ARDUINO_RESET_DELAY = 2.0  # Arduino resets when serial opens; let it boot
+
+_serial_lock: threading.Lock = threading.Lock()
+_ser: serial.Serial | None = None
+
+
+@app.on_event("startup")
+def _open_serial() -> None:
+    global _ser
+    try:
+        _ser = serial.Serial(_SERIAL_PORT, _SERIAL_BAUD, timeout=_SERIAL_TIMEOUT)
+        time.sleep(_ARDUINO_RESET_DELAY)   # wait for Arduino bootloader to finish
+        _ser.reset_input_buffer()
+        log.info(f"Serial: connected to {_SERIAL_PORT} at {_SERIAL_BAUD} baud")
+    except serial.serialutil.SerialException as exc:
+        log.warning(f"Serial: could not open {_SERIAL_PORT} — {exc}")
+        _ser = None
+
+
+def _send_serial_command(command: str) -> str:
+    """Send a newline-terminated command and return the Arduino's response line."""
+    if _ser is None or not _ser.is_open:
+        raise HTTPException(
+            status_code=503,
+            detail=f"Serial device {_SERIAL_PORT} not available",
+        )
+    with _serial_lock:
+        _ser.reset_input_buffer()
+        _ser.write(f"{command}\n".encode())
+        raw = _ser.readline()
+    response = raw.decode(errors="replace").strip()
+    if not response:
+        raise HTTPException(status_code=502, detail="No response from Arduino (timeout)")
+    return response
+
+
+@app.post("/sauce/start")
+def sauce_start():
+    """Send ON over serial → Arduino turns on LED_BUILTIN."""
+    response = _send_serial_command("ON")
+    return {"success": True, "command": "ON", "arduino_response": response}
+
+
+@app.post("/sauce/stop")
+def sauce_stop():
+    """Send OFF over serial → Arduino turns off LED_BUILTIN."""
+    response = _send_serial_command("OFF")
+    return {"success": True, "command": "OFF", "arduino_response": response}
+
 
 # ─── Dependency injection ─────────────────────────────────────────────────────
 # The order_manager is set once at startup by main.py
