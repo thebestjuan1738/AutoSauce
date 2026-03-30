@@ -40,7 +40,8 @@ AutoSauce/
     │   ├── order_manager.py       # Queue + motion sequence
     │   └── sauce_config.py        # All tunable physical values
     ├── motion/
-    │   └── mock_drivers.py        # Fake hardware for dev/testing
+    │   ├── mock_drivers.py        # Fake hardware for dev/testing
+    │   └── gpio_drivers.py        # Real hardware drivers (Pi only)
     └── utils/
         └── logger.py              # Shared logger
 ```
@@ -221,36 +222,70 @@ COVERAGE_PROFILES = {
 
 ---
 
-## Swapping in real hardware drivers
+## Motor control
 
-When the hardware arrives, create `pi/motion/gpio_drivers.py` with real
-implementations of the four driver classes:
+### Switching between mock and real hardware
+
+`pi/motion/gpio_drivers.py` contains the real hardware drivers. To enable them,
+change one line at the top of `main.py`:
+
 ```python
-class GPIOGantry:
-    def move_to(self, position_mm: int) -> None: ...
-
-class GPIOGripper:
-    def close(self, duration_ms: int) -> None: ...
-    def open(self, duration_ms: int) -> None: ...
-
-class GPIOExtruder:
-    def dispense(self, duration_ms: int) -> None: ...
-
-class GPIOConveyor:
-    def start(self, speed: int) -> None: ...
-    def stop(self) -> None: ...
+USE_MOCK = False   # was True
 ```
 
-Then in `main.py`, change one block:
-```python
-# Before (mock):
-from pi.motion.mock_drivers import MockGantry, MockGripper, MockExtruder, MockConveyor
+The GPIO drivers are lazy-imported, so `RPi.GPIO` and `pyvesc` are never loaded
+when `USE_MOCK = True`. The dev machine doesn't need those packages installed.
 
-# After (real hardware):
-from pi.motion.gpio_drivers import GPIOGantry, GPIOGripper, GPIOExtruder, GPIOConveyor
+### Hardware summary
+
+| Motor | Controller | Interface | Driver class |
+|-------|-----------|-----------|-------------|
+| Gantry (rail) | Turnigy SK8 V2 VESC | UART serial (PyVESC) | `GPIOGantry` |
+| Extruder (plunger) | goBILDA 3105 | PWM — GPIO 18 | `GPIOExtruder` |
+| Gripper | goBILDA 3105 | PWM — GPIO 23 | `GPIOGripper` |
+| Conveyor belt | goBILDA 3105 | PWM — GPIO 24 | `GPIOConveyor` |
+
+> GPIO pin numbers are placeholders — confirm against actual wiring before powering on.
+
+### Gantry — VESC setup (one-time)
+
+The SK8 V2 ships unconfigured and will not move correctly until set up with
+[VESC Tool](https://vesc-project.com/vesc_tool):
+
+1. Connect the SK8 V2 to a laptop via USB and open VESC Tool
+2. Run the **motor detection wizard** (auto-detects motor parameters)
+3. Set the **encoder PPR** from the encoder's spec sheet
+4. Enable **FOC mode**
+5. Set **max ERPM** to a safe value for the rail length
+6. Set **UART baud rate** to 115200
+7. Save configuration to the ESC
+
+Also enable UART on the Pi before first use:
+```bash
+sudo raspi-config  # → Interface Options → Serial
 ```
 
-Nothing else changes.
+### Calibration TODOs (before first hardware run)
+
+All calibration values are constants at the top of `pi/motion/gpio_drivers.py`:
+
+| Constant | Default | What to do |
+|----------|---------|------------|
+| `TICKS_PER_MM` | 100 | Calculate from encoder PPR × pulley/belt ratio after VESC Tool setup |
+| `TRAVEL_RPM` | 3000 | Tune — increase for speed, decrease if motor stalls |
+| `POSITION_TOLERANCE_TICKS` | 50 | Tighten if positioning is imprecise |
+| `PIN_EXTRUDER/GRIPPER/CONVEYOR` | 18/23/24 | Confirm against actual wiring |
+
+### Installing Pi-only dependencies
+```bash
+pip install pyvesc pyserial RPi.GPIO --break-system-packages
+```
+
+### Arming sequence
+
+If the goBILDA controllers don't respond on first power-up, they may need an
+arming pulse. Each PWM driver class (`GPIOExtruder`, `GPIOGripper`, `GPIOConveyor`)
+has a commented-out arming block in `__init__` — uncomment it if needed.
 
 ---
 

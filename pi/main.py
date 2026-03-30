@@ -17,17 +17,35 @@ from pi.motion.mock_drivers import MockGantry, MockGripper, MockExtruder, MockCo
 from pi.api.server import app, set_order_manager
 from pi.utils.logger import log
 
+# ── Driver toggle ──────────────────────────────────────────────────────────────
+# True  → mock drivers (no hardware needed, runs on any machine)
+# False → real GPIO drivers (Pi only, hardware must be wired and VESC configured)
+USE_MOCK = True
+
 
 def build_order_manager() -> OrderManager:
-    """
-    Swap Mock* for real GPIO drivers once hardware is wired.
-    Nothing else in the codebase needs to change.
-    """
+    if USE_MOCK:
+        return OrderManager(
+            gantry=MockGantry(),
+            gripper=MockGripper(),
+            extruder=MockExtruder(),
+            conveyor=MockConveyor(),
+        )
+
+    # Lazy import so RPi.GPIO / pyvesc are never loaded when USE_MOCK is True.
+    # These packages only exist on the Pi — importing them on a dev machine
+    # would crash immediately.
+    from pi.motion.gpio_drivers import (
+        GPIOGantry,
+        GPIOExtruder,
+        GPIOGripper,
+        GPIOConveyor,
+    )
     return OrderManager(
-        gantry=MockGantry(),
-        gripper=MockGripper(),
-        extruder=MockExtruder(),
-        conveyor=MockConveyor(),
+        gantry=GPIOGantry(),
+        gripper=GPIOGripper(),
+        extruder=GPIOExtruder(),
+        conveyor=GPIOConveyor(),
     )
 
 
