@@ -498,12 +498,23 @@ header h1 {
 /* -- Log list ---------------------------------------- */
 .log-list {
   list-style: none;
-  overflow-y: auto;
+  overflow-y: scroll;
   flex: 1;
   padding: 10px 0 16px;
   margin: 0;
   font-family: 'Consolas', 'Menlo', monospace;
   font-size: 0.78rem;
+  cursor: grab;
+  /* Hide scrollbar across browsers */
+  scrollbar-width: none;          /* Firefox */
+  -ms-overflow-style: none;       /* IE/Edge */
+}
+.log-list::-webkit-scrollbar {
+  display: none;                  /* Chrome/Safari */
+}
+.log-list.dragging {
+  cursor: grabbing;
+  user-select: none;
 }
 
 .log-list li {

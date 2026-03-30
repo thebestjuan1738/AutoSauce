@@ -287,3 +287,43 @@ gearBtn.addEventListener('click', openLogPanel);
 logCloseBtn.addEventListener('click', closeLogPanel);
 logBackdrop.addEventListener('click', closeLogPanel);
 logRefreshBtn.addEventListener('click', fetchLogs);
+
+/* -----------------------------------------------
+   Drag-to-scroll on the log list (mouse + touch)
+----------------------------------------------- */
+
+(function initDragScroll(el) {
+  let startY    = 0;
+  let startTop  = 0;
+  let dragging  = false;
+
+  // ── Mouse ──────────────────────────────────────
+  el.addEventListener('mousedown', e => {
+    dragging  = true;
+    startY    = e.clientY;
+    startTop  = el.scrollTop;
+    el.classList.add('dragging');
+    e.preventDefault();
+  });
+
+  window.addEventListener('mousemove', e => {
+    if (!dragging) return;
+    el.scrollTop = startTop - (e.clientY - startY);
+  });
+
+  window.addEventListener('mouseup', () => {
+    dragging = false;
+    el.classList.remove('dragging');
+  });
+
+  // ── Touch ──────────────────────────────────────
+  el.addEventListener('touchstart', e => {
+    startY   = e.touches[0].clientY;
+    startTop = el.scrollTop;
+  }, { passive: true });
+
+  el.addEventListener('touchmove', e => {
+    el.scrollTop = startTop - (e.touches[0].clientY - startY);
+  }, { passive: true });
+
+}(logList));
