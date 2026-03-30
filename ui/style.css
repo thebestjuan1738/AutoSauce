@@ -385,3 +385,164 @@ header h1 {
   border-radius: 99px;
   transition: width linear;   /* duration set dynamically in JS */
 }
+
+/* -- Gear button ------------------------------------- */
+.gear-btn {
+  position: fixed;
+  bottom: 18px;
+  right: 18px;
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  border: 2px solid rgba(0,0,0,0.08);
+  background: rgba(255,255,255,0.85);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  color: #9898b8;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  outline: none;
+  z-index: 300;
+  transition: color 0.15s, background 0.15s, transform 0.15s, box-shadow 0.15s;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.10);
+}
+.gear-btn svg {
+  width: 22px;
+  height: 22px;
+  pointer-events: none;
+}
+.gear-btn:hover {
+  color: #6366f1;
+  background: #ffffff;
+  box-shadow: 0 4px 16px rgba(99,102,241,0.18);
+}
+.gear-btn:active {
+  transform: scale(0.91);
+}
+
+/* -- Log backdrop ------------------------------------ */
+.log-backdrop {
+  display: none;
+  position: fixed;
+  inset: 0;
+  background: rgba(44,44,62,0.35);
+  backdrop-filter: blur(3px);
+  -webkit-backdrop-filter: blur(3px);
+  z-index: 400;
+}
+.log-backdrop.open {
+  display: block;
+}
+
+/* -- Log panel --------------------------------------- */
+.log-panel {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  max-height: 60vh;
+  background: #1e1e2e;
+  border-top: 2px solid rgba(99,102,241,0.4);
+  border-radius: 20px 20px 0 0;
+  display: flex;
+  flex-direction: column;
+  z-index: 500;
+  transform: translateY(100%);
+  transition: transform 0.32s cubic-bezier(.34,1.4,.64,1);
+  overflow: hidden;
+}
+.log-panel:not([hidden]) {
+  transform: translateY(0);
+}
+
+.log-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 20px 12px;
+  border-bottom: 1px solid rgba(255,255,255,0.08);
+  flex-shrink: 0;
+}
+
+.log-panel-title {
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 3px;
+  text-transform: uppercase;
+  color: #a5b4fc;
+}
+
+.log-panel-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.log-action-btn {
+  background: none;
+  border: none;
+  color: #6b7280;
+  font-size: 1.3rem;
+  line-height: 1;
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: 8px;
+  transition: color 0.15s, background 0.15s;
+}
+.log-action-btn:hover {
+  color: #a5b4fc;
+  background: rgba(165,180,252,0.1);
+}
+
+/* -- Log list ---------------------------------------- */
+.log-list {
+  list-style: none;
+  overflow-y: scroll;
+  flex: 1;
+  padding: 10px 0 16px;
+  margin: 0;
+  font-family: 'Consolas', 'Menlo', monospace;
+  font-size: 0.78rem;
+  cursor: grab;
+  /* Hide scrollbar across browsers */
+  scrollbar-width: none;          /* Firefox */
+  -ms-overflow-style: none;       /* IE/Edge */
+}
+.log-list::-webkit-scrollbar {
+  display: none;                  /* Chrome/Safari */
+}
+.log-list.dragging {
+  cursor: grabbing;
+  user-select: none;
+}
+
+.log-list li {
+  display: grid;
+  grid-template-columns: 64px 56px 1fr;
+  gap: 0 10px;
+  align-items: baseline;
+  padding: 4px 20px;
+  line-height: 1.5;
+  border-bottom: 1px solid rgba(255,255,255,0.04);
+}
+.log-list li:last-child {
+  border-bottom: none;
+}
+
+.log-time  { color: #4b5563; }
+.log-level { font-weight: 700; text-transform: uppercase; }
+.log-msg   { color: #e2e8f0; word-break: break-word; }
+
+.log-level-INFO     { color: #60a5fa; }
+.log-level-DEBUG    { color: #6b7280; }
+.log-level-WARNING  { color: #fbbf24; }
+.log-level-ERROR    { color: #f87171; }
+.log-level-CRITICAL { color: #ef4444; }
+
+.log-empty {
+  grid-column: 1 / -1;
+  color: #4b5563;
+  text-align: center;
+  padding: 24px 0;
+}

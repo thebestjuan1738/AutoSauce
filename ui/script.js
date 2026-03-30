@@ -233,3 +233,97 @@ function resetUI() {
   disableStartButton();
   console.log('[SauceBot] Ready for next order.');
 }
+
+/* -----------------------------------------------
+   Log panel
+----------------------------------------------- */
+
+const gearBtn      = document.getElementById('gear-btn');
+const logPanel     = document.getElementById('log-panel');
+const logBackdrop  = document.getElementById('log-backdrop');
+const logList      = document.getElementById('log-list');
+const logRefreshBtn = document.getElementById('log-refresh-btn');
+const logCloseBtn  = document.getElementById('log-close-btn');
+
+function openLogPanel() {
+  logPanel.hidden = false;
+  logBackdrop.classList.add('open');
+  fetchLogs();
+}
+
+function closeLogPanel() {
+  logPanel.hidden = true;
+  logBackdrop.classList.remove('open');
+}
+
+async function fetchLogs() {
+  logList.innerHTML = '<li class="log-empty" style="grid-column:1/-1">Loading...</li>';
+  try {
+    const res = await fetch(`${API_BASE}/api/logs`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const { logs } = await res.json();
+
+    if (!logs || logs.length === 0) {
+      logList.innerHTML = '<li class="log-empty" style="grid-column:1/-1">No log entries yet.</li>';
+      return;
+    }
+
+    // Render newest-first (reversed ol handles the visual order)
+    logList.innerHTML = logs.slice().reverse().map(entry => {
+      const levelClass = `log-level-${entry.level}`;
+      const safeMsg    = entry.message.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+      return `<li>
+        <span class="log-time">${entry.time}</span>
+        <span class="log-level ${levelClass}">${entry.level}</span>
+        <span class="log-msg">${safeMsg}</span>
+      </li>`;
+    }).join('');
+  } catch (err) {
+    logList.innerHTML = `<li class="log-empty" style="grid-column:1/-1">Could not load logs: ${err.message}</li>`;
+  }
+}
+
+gearBtn.addEventListener('click', openLogPanel);
+logCloseBtn.addEventListener('click', closeLogPanel);
+logBackdrop.addEventListener('click', closeLogPanel);
+logRefreshBtn.addEventListener('click', fetchLogs);
+
+/* -----------------------------------------------
+   Drag-to-scroll on the log list (mouse + touch)
+----------------------------------------------- */
+
+(function initDragScroll(el) {
+  let startY    = 0;
+  let startTop  = 0;
+  let dragging  = false;
+
+  // ── Mouse ──────────────────────────────────────
+  el.addEventListener('mousedown', e => {
+    dragging  = true;
+    startY    = e.clientY;
+    startTop  = el.scrollTop;
+    el.classList.add('dragging');
+    e.preventDefault();
+  });
+
+  window.addEventListener('mousemove', e => {
+    if (!dragging) return;
+    el.scrollTop = startTop - (e.clientY - startY);
+  });
+
+  window.addEventListener('mouseup', () => {
+    dragging = false;
+    el.classList.remove('dragging');
+  });
+
+  // ── Touch ──────────────────────────────────────
+  el.addEventListener('touchstart', e => {
+    startY   = e.touches[0].clientY;
+    startTop = el.scrollTop;
+  }, { passive: true });
+
+  el.addEventListener('touchmove', e => {
+    el.scrollTop = startTop - (e.touches[0].clientY - startY);
+  }, { passive: true });
+
+}(logList));
