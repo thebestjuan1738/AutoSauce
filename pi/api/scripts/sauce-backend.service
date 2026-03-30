@@ -1,0 +1,13 @@
+[Unit]
+Description=Sauce Dispenser Backend (Docker)
+After=network.target docker.service
+Requires=docker.service
+
+[Service]
+Type=simple
+User=saucemachine
+ExecStart=/home/saucemachine/AutoSauce/pi/api/scripts/launch-backend.sh
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target

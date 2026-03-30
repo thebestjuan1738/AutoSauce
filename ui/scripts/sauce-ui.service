@@ -1,0 +1,13 @@
+[Unit]
+Description=Sauce Dispenser UI (Chromium only)
+After=graphical.target
+
+[Service]
+Type=simple
+User=saucemachine
+Environment=DISPLAY=:0
+ExecStart=/home/saucemachine/AutoSauce/ui/scripts/launch-ui.sh
+Restart=on-failure
+
+[Install]
+WantedBy=graphical.target

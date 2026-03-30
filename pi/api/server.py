@@ -39,7 +39,9 @@ app.add_middleware(
 
 # Serve the UI static files at the root
 # So http://localhost:8080/ loads index.html automatically
-app.mount("/ui", StaticFiles(directory="ui", html=True), name="ui")
+import os
+ui_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../ui'))
+app.mount("/ui", StaticFiles(directory=ui_dir, html=True), name="ui")
 
 # ─── Dependency injection ─────────────────────────────────────────────────────
 # The order_manager is set once at startup by main.py
