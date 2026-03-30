@@ -1,4 +1,4 @@
-"""
+﻿"""
 api/server.py
 
 FastAPI server — sits between the Chromium UI and the order_manager.
@@ -22,7 +22,7 @@ from pydantic import BaseModel
 
 from pi.ordering.order_manager import OrderManager, OrderStatus
 from pi.ordering.sauce_config import get_coverage_levels
-from pi.utils.logger import log
+from pi.utils.logger import log, get_recent_logs
 
 # ─── App ──────────────────────────────────────────────────────────────────────
 
@@ -118,6 +118,12 @@ def get_levels():
     The UI can call this on load to build its buttons dynamically in future.
     """
     return {"levels": get_coverage_levels()}
+
+
+@app.get("/api/logs")
+def get_logs():
+    """Returns recent log entries for the UI log panel."""
+    return {"logs": get_recent_logs()}
 
 
 @app.get("/api/health")
