@@ -140,7 +140,10 @@ function startPolling(order_id) {
 
       if (data.status === 'DONE') {
         stopPolling();
-        showOverlay('Done! Enjoy your sandwich.');
+        // Snap bar to 100% before showing completion message
+        progressFill.style.transition = 'width 0.3s ease';
+        progressFill.style.width = '100%';
+        messageText.textContent = 'Done! Enjoy your sandwich.';
         setTimeout(() => {
           hideOverlay();
           resetUI();
@@ -182,8 +185,8 @@ function showOverlay(message) {
   progressFill.style.width = '0%';
   requestAnimationFrame(() => {
     requestAnimationFrame(() => {
-      // Use a long duration so it fills slowly while polling
-      progressFill.style.transition = `width 30s linear`;
+      // Fill most of the bar over the expected dispense duration
+      progressFill.style.transition = `width 10s linear`;
       progressFill.style.width = '95%';   // Never quite reaches 100% until DONE
     });
   });
