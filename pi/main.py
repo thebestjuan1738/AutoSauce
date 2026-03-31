@@ -22,9 +22,13 @@ from pi.utils.logger import log
 # False → real GPIO drivers (Pi only, hardware must be wired and VESC configured)
 USE_MOCK = True
 
+# True → use real VESCConveyor (NEO rev via USB VESC) even when USE_MOCK is True.
+# Everything else stays mocked — lets you test the sandwich motor in isolation.
+USE_VESC_CONVEYOR = True
+
 
 def build_order_manager() -> OrderManager:
-    if USE_MOCK:
+    if USE_MOCK and not USE_VESC_CONVEYOR:
         return OrderManager(
             gantry=MockGantry(),
             gripper=MockGripper(),
@@ -32,9 +36,21 @@ def build_order_manager() -> OrderManager:
             conveyor=MockConveyor(),
         )
 
-    # Lazy import so RPi.GPIO / pyvesc are never loaded when USE_MOCK is True.
-    # These packages only exist on the Pi — importing them on a dev machine
-    # would crash immediately.
+    # Lazy import so pyvesc is only loaded when actually needed.
+    from pi.motion.vesc_conveyor import VESCConveyor
+    conveyor = VESCConveyor()
+    conveyor.boot_check()
+
+    if USE_MOCK:
+        # Hardware-in-the-loop: real VESC conveyor, everything else mocked.
+        return OrderManager(
+            gantry=MockGantry(),
+            gripper=MockGripper(),
+            extruder=MockExtruder(),
+            conveyor=conveyor,
+        )
+
+    # Full real drivers (Pi only).
     from pi.motion.gpio_drivers import (
         GPIOGantry,
         GPIOExtruder,

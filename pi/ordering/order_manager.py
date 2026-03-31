@@ -179,10 +179,14 @@ class OrderManager:
         self._gantry.move_to(POSITIONS["home"])
 
     def _run_conveyor(self, speed: int, duration_ms: int) -> None:
-        """Runs on its own thread — starts conveyor, waits, stops it."""
+        """Runs on its own thread — forward for first half, reverse for second half."""
         import time
+        half = duration_ms / 2 / 1000
         self._conveyor.start(speed)
-        time.sleep(duration_ms / 1000)
+        time.sleep(half)
+        if hasattr(self._conveyor, 'reverse'):
+            self._conveyor.reverse(speed)
+            time.sleep(half)
         self._conveyor.stop()
 
     def _safe_abort(self) -> None:

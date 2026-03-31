@@ -51,7 +51,7 @@ app.mount("/ui", StaticFiles(directory=ui_dir, html=True), name="ui")
 # ─── Serial (Arduino) ───────────────────────────────────────────────────────
 
 import sys
-_SERIAL_PORT    = "COM3" if sys.platform == "win32" else "/dev/ttyACM0"
+_SERIAL_PORT    = "COM4" if sys.platform == "win32" else "/dev/ttyACM0"
 _SERIAL_BAUD    = 9600
 _SERIAL_TIMEOUT = 2.0   # seconds to wait for Arduino response line
 _ARDUINO_RESET_DELAY = 2.0  # Arduino resets when serial opens; let it boot
@@ -62,15 +62,8 @@ _ser: serial.Serial | None = None
 
 @app.on_event("startup")
 def _open_serial() -> None:
-    global _ser
-    try:
-        _ser = serial.Serial(_SERIAL_PORT, _SERIAL_BAUD, timeout=_SERIAL_TIMEOUT)
-        time.sleep(_ARDUINO_RESET_DELAY)   # wait for Arduino bootloader to finish
-        _ser.reset_input_buffer()
-        log.info(f"Serial: connected to {_SERIAL_PORT} at {_SERIAL_BAUD} baud")
-    except serial.serialutil.SerialException as exc:
-        log.warning(f"Serial: could not open {_SERIAL_PORT} — {exc}")
-        _ser = None
+    # Arduino replaced by VESC — serial port owned by VESCConveyor. Skip.
+    pass
 
 
 def _send_serial_command(command: str) -> str:
