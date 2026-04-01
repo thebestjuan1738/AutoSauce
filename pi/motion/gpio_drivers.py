@@ -5,16 +5,25 @@ Real hardware drivers for the SauceBot.
 Mirrors the interface of mock_drivers.py exactly — swap in main.py by setting USE_MOCK = False.
 
 Dependencies (Pi only):
-    pip install pyvesc pyserial RPi.GPIO --break-system-packages
+    pip install pyvesc pyserial RPi.GPIO pigpio --break-system-packages
+    sudo systemctl enable pigpiod && sudo systemctl start pigpiod
 
 Hardware:
     Gantry   — Turnigy SK8 V2 VESC over UART (PyVESC), closed-loop encoder position
-    Extruder — goBILDA 3105 PWM (GPIO 18)
-    Gripper  — goBILDA 3105 PWM (GPIO 23)
+    Extruder — 5000 Series 12VDC motor + goBILDA 1x20A controller
+                 ESC signal ◄── GPIO 18 (hardware PWM via pigpio)
+                 Encoder A  ──► GPIO 23
+                 Encoder B  ──► GPIO 25
+    Gripper  — 5000 Series 12VDC motor + goBILDA 1x20A controller
+                 ESC signal ◄── GPIO 12 (hardware PWM via pigpio)
+                 Encoder A  ──► GPIO 16
+                 Encoder B  ──► GPIO 20
     Conveyor — goBILDA 3105 PWM (GPIO 24)
 """
 
+import threading
 import time
+import pigpio
 import pyvesc
 from pyvesc import VESC
 import RPi.GPIO as GPIO
@@ -50,10 +59,50 @@ DUTY_FULL_FWD = 9.5
 DUTY_FULL_REV = 5.5
 
 # ─── GPIO pin assignments (BCM numbering) ─────────────────────────────────────
-# TODO: confirm all three pins match actual wiring before powering on
-PIN_EXTRUDER = 18
-PIN_GRIPPER  = 23
+# TODO: confirm all pins match actual wiring before powering on
 PIN_CONVEYOR = 24
+
+# Extruder — 5000 Series 12VDC motor + goBILDA 1x20A controller
+PIN_EXTRUDER_ESC       = 18    # PWM signal to goBILDA 1x20A controller (hardware PWM via pigpio)
+PIN_EXTRUDER_ENCODER_A = 23    # encoder channel A
+PIN_EXTRUDER_ENCODER_B = 25    # encoder channel B
+
+# ─── Extruder ESC pulse widths (microseconds) ─────────────────────────────────
+_EXTRUDER_ESC_STOP         = 1500
+_EXTRUDER_ESC_HOME_STRONG  = 1300   # strong retract torque, homing phase 1
+_EXTRUDER_ESC_HOME_SLOW    = 1450   # slow retract creep, homing phase 2
+_EXTRUDER_ESC_DISPENSE     = 1650   # extend plunger
+_EXTRUDER_ESC_RETRACT      = 1350   # retract plunger to zero
+
+# ─── Extruder motion constants ────────────────────────────────────────────────
+_EXTRUDER_TICKS_PER_REV         = 753
+_EXTRUDER_DISPENSE_REVOLUTIONS  = 2.0
+_EXTRUDER_DISPENSE_TARGET_TICKS = int(_EXTRUDER_DISPENSE_REVOLUTIONS * _EXTRUDER_TICKS_PER_REV)  # 1506
+_EXTRUDER_HOME_PHASE1_TIMEOUT_S = 1.2    # max seconds waiting for movement in phase 1
+_EXTRUDER_STALL_DETECT_MS       = 200    # ms with no encoder movement = stalled at limit
+_EXTRUDER_MOTION_TIMEOUT_S      = 5.0    # max seconds for dispense/retract moves
+_EXTRUDER_POLL_S                = 0.005  # 5 ms poll interval
+
+# Gripper — 5000 Series 12VDC motor + goBILDA 1x20A controller
+PIN_GRIPPER_ESC       = 12    # PWM signal to goBILDA 1x20A controller (hardware PWM via pigpio)
+PIN_GRIPPER_ENCODER_A = 16    # encoder channel A
+PIN_GRIPPER_ENCODER_B = 20    # encoder channel B
+
+# ─── Gripper ESC pulse widths (microseconds) ──────────────────────────────────
+_GRIPPER_ESC_STOP         = 1500
+_GRIPPER_ESC_OPEN_STRONG  = 1700   # strong torque, homing phase 1
+_GRIPPER_ESC_OPEN_SLOW    = 1550   # slow creep, homing phase 2
+_GRIPPER_ESC_OPEN_FAST    = 1650   # fast return to zero
+_GRIPPER_ESC_CLOSE_FAST   = 1350   # fast close to target
+
+# ─── Gripper motion constants ─────────────────────────────────────────────────
+_GRIPPER_TICKS_PER_REV         = 753
+_GRIPPER_CLOSE_REVOLUTIONS     = 1.6
+_GRIPPER_CLOSE_TARGET_TICKS    = -int(_GRIPPER_CLOSE_REVOLUTIONS * _GRIPPER_TICKS_PER_REV)  # -1204
+_GRIPPER_HOME_PHASE1_TIMEOUT_S = 1.2    # max seconds waiting for movement in phase 1
+_GRIPPER_STALL_DETECT_MS       = 200    # ms with no encoder movement = stalled at limit
+_GRIPPER_MOTION_TIMEOUT_S      = 5.0    # max seconds for open/close moves
+_GRIPPER_POLL_S                = 0.005  # 5 ms poll interval
 
 
 # ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -142,79 +191,358 @@ class GPIOGantry:
 
 class GPIOExtruder:
     """
-    Controls the brushed linear extruder (sauce plunger) via PWM on GPIO 18.
+    Controls the 5000 Series 12VDC extruder (sauce plunger) via a goBILDA 1x20A controller.
+
+    Hardware:
+        Motor controller signal  ◄── Pi GPIO 18  (hardware PWM via pigpio)
+        Encoder A                ──► Pi GPIO 23
+        Encoder B                ──► Pi GPIO 25
+
+    Encoder-based position control:
+        home()     — retracts to mechanical limit (two-phase), zeroes encoder
+        dispense() — extends plunger to _EXTRUDER_DISPENSE_TARGET_TICKS
+        retract()  — returns plunger to encoder zero (fully retracted)
+
+    home() is called automatically in __init__. Call cleanup() on shutdown.
+
+    Requires pigpiod running:
+        sudo systemctl start pigpiod
     """
 
     def __init__(self):
+        self._ticks = 0
+        self._lock  = threading.Lock()
+
+        # Encoder via RPi.GPIO ISRs
         GPIO.setmode(GPIO.BCM)
-        GPIO.setup(PIN_EXTRUDER, GPIO.OUT)
-        self._pwm = GPIO.PWM(PIN_EXTRUDER, PWM_FREQ)
-        self._pwm.start(DUTY_STOP)
+        GPIO.setwarnings(False)
+        GPIO.setup(PIN_EXTRUDER_ENCODER_A, GPIO.IN, pull_up_down=GPIO.PUD_UP)
+        GPIO.setup(PIN_EXTRUDER_ENCODER_B, GPIO.IN, pull_up_down=GPIO.PUD_UP)
+        GPIO.add_event_detect(PIN_EXTRUDER_ENCODER_A, GPIO.BOTH, callback=self._isr_a)
+        GPIO.add_event_detect(PIN_EXTRUDER_ENCODER_B, GPIO.BOTH, callback=self._isr_b)
 
-        # ── Arming sequence (uncomment if the goBILDA controller requires it) ──
-        # Some ESCs need a brief full-forward + full-reverse pulse on power-up
-        # before they will accept normal commands.
-        #
-        # log.info("GPIOExtruder: arming ESC...")
-        # self._pwm.ChangeDutyCycle(DUTY_FULL_FWD)
-        # time.sleep(2.0)
-        # self._pwm.ChangeDutyCycle(DUTY_FULL_REV)
-        # time.sleep(2.0)
-        # self._pwm.ChangeDutyCycle(DUTY_STOP)
-        # time.sleep(1.0)
-        # log.info("GPIOExtruder: armed")
+        # ESC via pigpio hardware PWM
+        self._pi = pigpio.pi()
+        if not self._pi.connected:
+            raise RuntimeError(
+                "GPIOExtruder: pigpio daemon not running — "
+                "run: sudo systemctl start pigpiod"
+            )
 
-        log.info("GPIOExtruder: PWM started on GPIO %d", PIN_EXTRUDER)
+        self._set_esc(_EXTRUDER_ESC_STOP)
+        log.info(
+            "GPIOExtruder: ESC on GPIO %d, encoder on GPIO %d/%d",
+            PIN_EXTRUDER_ESC, PIN_EXTRUDER_ENCODER_A, PIN_EXTRUDER_ENCODER_B,
+        )
+        log.info("GPIOExtruder: waiting 2s for ESC to arm...")
+        time.sleep(2.0)
 
-    def dispense(self, duration_ms: int) -> None:
-        """Run the extruder plunger forward for duration_ms, then stop."""
-        log.info("GPIOExtruder: dispensing for %dms", duration_ms)
-        self._pwm.ChangeDutyCycle(DUTY_FULL_FWD)
-        time.sleep(duration_ms / 1000.0)
-        self._pwm.ChangeDutyCycle(DUTY_STOP)
-        log.info("GPIOExtruder: stopped")
+        self.home()
+
+    def cleanup(self) -> None:
+        """Disarm ESC and release GPIO resources. Call on shutdown."""
+        self._set_esc(_EXTRUDER_ESC_STOP)
+        self._pi.set_servo_pulsewidth(PIN_EXTRUDER_ESC, 0)
+        self._pi.stop()
+        GPIO.cleanup([PIN_EXTRUDER_ENCODER_A, PIN_EXTRUDER_ENCODER_B])
+        log.info("GPIOExtruder: cleanup done")
+
+    # ─── Encoder ISRs ─────────────────────────────────────────────────────────
+
+    def _isr_a(self, channel) -> None:
+        a = GPIO.input(PIN_EXTRUDER_ENCODER_A)
+        b = GPIO.input(PIN_EXTRUDER_ENCODER_B)
+        with self._lock:
+            if a == b:
+                self._ticks += 1
+            else:
+                self._ticks -= 1
+
+    def _isr_b(self, channel) -> None:
+        a = GPIO.input(PIN_EXTRUDER_ENCODER_A)
+        b = GPIO.input(PIN_EXTRUDER_ENCODER_B)
+        with self._lock:
+            if a != b:
+                self._ticks += 1
+            else:
+                self._ticks -= 1
+
+    def _get_ticks(self) -> int:
+        with self._lock:
+            return self._ticks
+
+    def _zero_ticks(self) -> None:
+        with self._lock:
+            self._ticks = 0
+
+    # ─── ESC control ──────────────────────────────────────────────────────────
+
+    def _set_esc(self, pulse_us: int) -> None:
+        self._pi.set_servo_pulsewidth(PIN_EXTRUDER_ESC, pulse_us)
+
+    # ─── Motion ───────────────────────────────────────────────────────────────
+
+    def home(self) -> None:
+        """
+        Phase 1: strong retract torque until movement is detected.
+        Phase 2: slow retract creep until stall at mechanical retracted limit.
+        Zeroes the encoder once stall is confirmed.
+        """
+        log.info("GPIOExtruder: homing — phase 1 (strong retract torque)...")
+        last_ticks = self._get_ticks()
+
+        start = time.time()
+        while True:
+            self._set_esc(_EXTRUDER_ESC_HOME_STRONG)
+            if self._get_ticks() != last_ticks:
+                break
+            if time.time() - start > _EXTRUDER_HOME_PHASE1_TIMEOUT_S:
+                self._set_esc(_EXTRUDER_ESC_STOP)
+                raise RuntimeError(
+                    "GPIOExtruder: no movement detected in homing phase 1 — "
+                    "check ESC wiring, motor connection, and encoder"
+                )
+            time.sleep(_EXTRUDER_POLL_S)
+
+        log.info("GPIOExtruder: homing — phase 2 (slow creep to retracted limit)...")
+        last_ticks     = self._get_ticks()
+        last_move_time = time.time()
+
+        while True:
+            self._set_esc(_EXTRUDER_ESC_HOME_SLOW)
+            current = self._get_ticks()
+            if current != last_ticks:
+                last_ticks     = current
+                last_move_time = time.time()
+
+            if (time.time() - last_move_time) * 1000 > _EXTRUDER_STALL_DETECT_MS:
+                self._set_esc(_EXTRUDER_ESC_STOP)
+                time.sleep(0.2)
+                self._zero_ticks()
+                log.info("GPIOExtruder: homing complete — encoder zeroed")
+                return
+
+            time.sleep(_EXTRUDER_POLL_S)
+
+    def dispense(self) -> None:
+        """Extend plunger to _EXTRUDER_DISPENSE_TARGET_TICKS."""
+        log.info(
+            "GPIOExtruder: dispensing to %d ticks (current: %d)",
+            _EXTRUDER_DISPENSE_TARGET_TICKS, self._get_ticks(),
+        )
+        start = time.time()
+
+        while self._get_ticks() < _EXTRUDER_DISPENSE_TARGET_TICKS:
+            self._set_esc(_EXTRUDER_ESC_DISPENSE)
+            if time.time() - start > _EXTRUDER_MOTION_TIMEOUT_S:
+                self._set_esc(_EXTRUDER_ESC_STOP)
+                raise RuntimeError(
+                    f"GPIOExtruder: dispense timed out after {_EXTRUDER_MOTION_TIMEOUT_S}s "
+                    f"(ticks={self._get_ticks()}, target={_EXTRUDER_DISPENSE_TARGET_TICKS})"
+                )
+            time.sleep(_EXTRUDER_POLL_S)
+
+        self._set_esc(_EXTRUDER_ESC_STOP)
+        time.sleep(0.15)
+        log.info("GPIOExtruder: dispense done (ticks=%d)", self._get_ticks())
+
+    def retract(self) -> None:
+        """Retract plunger back to encoder zero (fully retracted position)."""
+        log.info("GPIOExtruder: retracting (current ticks: %d)", self._get_ticks())
+        start = time.time()
+
+        while self._get_ticks() > 0:
+            self._set_esc(_EXTRUDER_ESC_RETRACT)
+            if time.time() - start > _EXTRUDER_MOTION_TIMEOUT_S:
+                self._set_esc(_EXTRUDER_ESC_STOP)
+                raise RuntimeError(
+                    f"GPIOExtruder: retract timed out after {_EXTRUDER_MOTION_TIMEOUT_S}s "
+                    f"(ticks={self._get_ticks()}, target=0)"
+                )
+            time.sleep(_EXTRUDER_POLL_S)
+
+        self._set_esc(_EXTRUDER_ESC_STOP)
+        time.sleep(0.15)
+        log.info("GPIOExtruder: retract done (ticks=%d)", self._get_ticks())
 
 
 # ─── Gripper ──────────────────────────────────────────────────────────────────
 
 class GPIOGripper:
     """
-    Controls the brushed DC gripper motor via PWM on GPIO 23.
-    Forward = close (grab bottle), reverse = open (release bottle).
+    Controls the 5000 Series 12VDC gripper motor via a goBILDA 1x20A controller.
+
+    Hardware:
+        Motor controller signal  ◄── Pi GPIO 12  (hardware PWM via pigpio)
+        Encoder A                ──► Pi GPIO 16
+        Encoder B                ──► Pi GPIO 20
+
+    Encoder-based position control:
+        home()  — drives to mechanical open limit (two-phase), zeroes encoder
+        close() — drives to _GRIPPER_CLOSE_TARGET_TICKS (-1204 ticks)
+        open()  — returns to encoder zero (open position)
+
+    home() is called automatically in __init__. Call cleanup() on shutdown.
+
+    Requires pigpiod running:
+        sudo systemctl start pigpiod
     """
 
     def __init__(self):
+        self._ticks = 0
+        self._lock  = threading.Lock()
+
+        # Encoder via RPi.GPIO ISRs
         GPIO.setmode(GPIO.BCM)
-        GPIO.setup(PIN_GRIPPER, GPIO.OUT)
-        self._pwm = GPIO.PWM(PIN_GRIPPER, PWM_FREQ)
-        self._pwm.start(DUTY_STOP)
+        GPIO.setwarnings(False)
+        GPIO.setup(PIN_GRIPPER_ENCODER_A, GPIO.IN, pull_up_down=GPIO.PUD_UP)
+        GPIO.setup(PIN_GRIPPER_ENCODER_B, GPIO.IN, pull_up_down=GPIO.PUD_UP)
+        GPIO.add_event_detect(PIN_GRIPPER_ENCODER_A, GPIO.BOTH, callback=self._isr_a)
+        GPIO.add_event_detect(PIN_GRIPPER_ENCODER_B, GPIO.BOTH, callback=self._isr_b)
 
-        # ── Arming sequence (uncomment if the goBILDA controller requires it) ──
-        #
-        # log.info("GPIOGripper: arming ESC...")
-        # self._pwm.ChangeDutyCycle(DUTY_FULL_FWD)
-        # time.sleep(2.0)
-        # self._pwm.ChangeDutyCycle(DUTY_FULL_REV)
-        # time.sleep(2.0)
-        # self._pwm.ChangeDutyCycle(DUTY_STOP)
-        # time.sleep(1.0)
-        # log.info("GPIOGripper: armed")
+        # ESC via pigpio hardware PWM
+        self._pi = pigpio.pi()
+        if not self._pi.connected:
+            raise RuntimeError(
+                "GPIOGripper: pigpio daemon not running — "
+                "run: sudo systemctl start pigpiod"
+            )
 
-        log.info("GPIOGripper: PWM started on GPIO %d", PIN_GRIPPER)
+        self._set_esc(_GRIPPER_ESC_STOP)
+        log.info(
+            "GPIOGripper: ESC on GPIO %d, encoder on GPIO %d/%d",
+            PIN_GRIPPER_ESC, PIN_GRIPPER_ENCODER_A, PIN_GRIPPER_ENCODER_B,
+        )
+        log.info("GPIOGripper: waiting 2s for ESC to arm...")
+        time.sleep(2.0)
 
-    def close(self, duration_ms: int) -> None:
-        """Drive gripper forward (close) for duration_ms, then stop."""
-        log.info("GPIOGripper: closing (%dms)", duration_ms)
-        self._pwm.ChangeDutyCycle(DUTY_FULL_FWD)
-        time.sleep(duration_ms / 1000.0)
-        self._pwm.ChangeDutyCycle(DUTY_STOP)
+        self.home()
 
-    def open(self, duration_ms: int) -> None:
-        """Drive gripper in reverse (open) for duration_ms, then stop."""
-        log.info("GPIOGripper: opening (%dms)", duration_ms)
-        self._pwm.ChangeDutyCycle(DUTY_FULL_REV)
-        time.sleep(duration_ms / 1000.0)
-        self._pwm.ChangeDutyCycle(DUTY_STOP)
+    def cleanup(self) -> None:
+        """Disarm ESC and release GPIO resources. Call on shutdown."""
+        self._set_esc(_GRIPPER_ESC_STOP)
+        self._pi.set_servo_pulsewidth(PIN_GRIPPER_ESC, 0)
+        self._pi.stop()
+        GPIO.cleanup([PIN_GRIPPER_ENCODER_A, PIN_GRIPPER_ENCODER_B])
+        log.info("GPIOGripper: cleanup done")
+
+    # ─── Encoder ISRs ─────────────────────────────────────────────────────────
+
+    def _isr_a(self, channel) -> None:
+        a = GPIO.input(PIN_GRIPPER_ENCODER_A)
+        b = GPIO.input(PIN_GRIPPER_ENCODER_B)
+        with self._lock:
+            if a == b:
+                self._ticks += 1
+            else:
+                self._ticks -= 1
+
+    def _isr_b(self, channel) -> None:
+        a = GPIO.input(PIN_GRIPPER_ENCODER_A)
+        b = GPIO.input(PIN_GRIPPER_ENCODER_B)
+        with self._lock:
+            if a != b:
+                self._ticks += 1
+            else:
+                self._ticks -= 1
+
+    def _get_ticks(self) -> int:
+        with self._lock:
+            return self._ticks
+
+    def _zero_ticks(self) -> None:
+        with self._lock:
+            self._ticks = 0
+
+    # ─── ESC control ──────────────────────────────────────────────────────────
+
+    def _set_esc(self, pulse_us: int) -> None:
+        self._pi.set_servo_pulsewidth(PIN_GRIPPER_ESC, pulse_us)
+
+    # ─── Motion ───────────────────────────────────────────────────────────────
+
+    def home(self) -> None:
+        """
+        Phase 1: strong open torque until movement is detected.
+        Phase 2: slow creep until stall at mechanical open limit.
+        Zeroes the encoder once stall is confirmed.
+        """
+        log.info("GPIOGripper: homing — phase 1 (strong open torque)...")
+        last_ticks = self._get_ticks()
+
+        start = time.time()
+        while True:
+            self._set_esc(_GRIPPER_ESC_OPEN_STRONG)
+            if self._get_ticks() != last_ticks:
+                break
+            if time.time() - start > _GRIPPER_HOME_PHASE1_TIMEOUT_S:
+                self._set_esc(_GRIPPER_ESC_STOP)
+                raise RuntimeError(
+                    "GPIOGripper: no movement detected in homing phase 1 — "
+                    "check ESC wiring, motor connection, and encoder"
+                )
+            time.sleep(_GRIPPER_POLL_S)
+
+        log.info("GPIOGripper: homing — phase 2 (slow creep to limit)...")
+        last_ticks     = self._get_ticks()
+        last_move_time = time.time()
+
+        while True:
+            self._set_esc(_GRIPPER_ESC_OPEN_SLOW)
+            current = self._get_ticks()
+            if current != last_ticks:
+                last_ticks     = current
+                last_move_time = time.time()
+
+            if (time.time() - last_move_time) * 1000 > _GRIPPER_STALL_DETECT_MS:
+                self._set_esc(_GRIPPER_ESC_STOP)
+                time.sleep(0.2)
+                self._zero_ticks()
+                log.info("GPIOGripper: homing complete — encoder zeroed")
+                return
+
+            time.sleep(_GRIPPER_POLL_S)
+
+    def open(self) -> None:
+        """Fast return to encoder zero (open position)."""
+        log.info("GPIOGripper: opening (current ticks: %d)", self._get_ticks())
+        start = time.time()
+
+        while self._get_ticks() < 0:
+            self._set_esc(_GRIPPER_ESC_OPEN_FAST)
+            if time.time() - start > _GRIPPER_MOTION_TIMEOUT_S:
+                self._set_esc(_GRIPPER_ESC_STOP)
+                raise RuntimeError(
+                    f"GPIOGripper: open timed out after {_GRIPPER_MOTION_TIMEOUT_S}s "
+                    f"(ticks={self._get_ticks()}, target=0)"
+                )
+            time.sleep(_GRIPPER_POLL_S)
+
+        self._set_esc(_GRIPPER_ESC_STOP)
+        time.sleep(0.15)
+        log.info("GPIOGripper: open done (ticks=%d)", self._get_ticks())
+
+    def close(self) -> None:
+        """Fast close to _GRIPPER_CLOSE_TARGET_TICKS (1.6 revolutions)."""
+        log.info(
+            "GPIOGripper: closing to %d ticks (current: %d)",
+            _GRIPPER_CLOSE_TARGET_TICKS, self._get_ticks(),
+        )
+        start = time.time()
+
+        while self._get_ticks() > _GRIPPER_CLOSE_TARGET_TICKS:
+            self._set_esc(_GRIPPER_ESC_CLOSE_FAST)
+            if time.time() - start > _GRIPPER_MOTION_TIMEOUT_S:
+                self._set_esc(_GRIPPER_ESC_STOP)
+                raise RuntimeError(
+                    f"GPIOGripper: close timed out after {_GRIPPER_MOTION_TIMEOUT_S}s "
+                    f"(ticks={self._get_ticks()}, target={_GRIPPER_CLOSE_TARGET_TICKS})"
+                )
+            time.sleep(_GRIPPER_POLL_S)
+
+        self._set_esc(_GRIPPER_ESC_STOP)
+        time.sleep(0.15)
+        log.info("GPIOGripper: close done (ticks=%d)", self._get_ticks())
 
 
 # ─── Conveyor ─────────────────────────────────────────────────────────────────

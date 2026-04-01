@@ -30,7 +30,7 @@ from dataclasses import dataclass, field
 from enum import Enum, auto
 from typing import Optional
 
-from pi.ordering.sauce_config import get_profile, POSITIONS, GRIPPER
+from pi.ordering.sauce_config import get_profile, POSITIONS
 from pi.utils.logger import log
 
 
@@ -59,7 +59,7 @@ class OrderManager:
         """
         Args:
             gantry   — has move_to(position_mm: int) -> None
-            gripper  — has close(duration_ms: int) and open(duration_ms: int)
+            gripper  — has home(), close(), and open()
             extruder — has dispense(duration_ms: int) -> None
             conveyor — has start(speed: int), stop() -> None
         """
@@ -145,7 +145,7 @@ class OrderManager:
 
         # 2. Close gripper — pick up sauce dispenser
         log.info("Step 2: gripper close")
-        self._gripper.close(GRIPPER["close_ms"])
+        self._gripper.close()
 
         # 3. Travel to dispense position
         log.info("Step 3: gantry → dispense")
@@ -153,8 +153,8 @@ class OrderManager:
 
         # 4+5. Conveyor and extruder run simultaneously
         # Conveyor runs on a separate thread; extruder blocks the worker thread.
-        # Both start at the same time. Extruder finishes first (shorter duration).
-        # Worker then waits for conveyor thread to finish.
+        # Both start at the same time. Extruder finishes first (shorter travel).
+        # Worker then waits for conveyor thread to finish, then retracts plunger.
         log.info("Step 4+5: conveyor + extruder start")
         conveyor_thread = threading.Thread(
             target=self._run_conveyor,
@@ -162,9 +162,10 @@ class OrderManager:
             daemon=True,
         )
         conveyor_thread.start()
-        self._extruder.dispense(profile["extrude_ms"])  # blocks until done
+        self._extruder.dispense()                        # blocks until done
         conveyor_thread.join()                           # wait for belt to finish
         log.info("Step 6: conveyor done")
+        self._extruder.retract()                         # retract plunger after belt clears
 
         # 7. Return to dock
         log.info("Step 7: gantry → dock")
@@ -172,7 +173,7 @@ class OrderManager:
 
         # 8. Open gripper — return sauce dispenser to dock
         log.info("Step 8: gripper open")
-        self._gripper.open(GRIPPER["open_ms"])
+        self._gripper.open()
 
         # 9. Return to home
         log.info("Step 9: gantry → home")

@@ -30,19 +30,25 @@ class MockGantry:
 
 
 class MockGripper:
-    def close(self, duration_ms: int) -> None:
-        log.info(f"  [MOCK] Gripper: closing ({duration_ms}ms)")
-        time.sleep(duration_ms / 1000)
+    def home(self) -> None:
+        log.info("  [MOCK] Gripper: homing")
 
-    def open(self, duration_ms: int) -> None:
-        log.info(f"  [MOCK] Gripper: opening ({duration_ms}ms)")
-        time.sleep(duration_ms / 1000)
+    def close(self) -> None:
+        log.info("  [MOCK] Gripper: closing")
+
+    def open(self) -> None:
+        log.info("  [MOCK] Gripper: opening")
 
 
 class MockExtruder:
-    def dispense(self, duration_ms: int) -> None:
-        log.info(f"  [MOCK] Extruder: dispensing ({duration_ms}ms)")
-        time.sleep(duration_ms / 1000)
+    def home(self) -> None:
+        log.info("  [MOCK] Extruder: homing")
+
+    def dispense(self) -> None:
+        log.info("  [MOCK] Extruder: dispensing")
+
+    def retract(self) -> None:
+        log.info("  [MOCK] Extruder: retracting")
 
 
 class MockConveyor:
