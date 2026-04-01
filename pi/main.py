@@ -11,6 +11,8 @@ Chromium kiosk (launch.sh) opens http://localhost:8080/ui
 which loads index.html from the ui/ folder.
 """
 
+import os
+
 import uvicorn
 from pi.ordering.order_manager import OrderManager
 from pi.motion.mock_drivers import MockGantry, MockGripper, MockExtruder, MockConveyor
@@ -24,7 +26,10 @@ USE_MOCK = True
 
 # True → use real VESCConveyor (NEO rev via USB VESC) even when USE_MOCK is True.
 # Everything else stays mocked — lets you test the sandwich motor in isolation.
-USE_VESC_CONVEYOR = True
+# Can also be overridden via the USE_VESC_CONVEYOR environment variable:
+#   USE_VESC_CONVEYOR=0  → fall back to MockConveyor (no serial port needed)
+#   USE_VESC_CONVEYOR=1  → open /dev/ttyACM0 (requires --device flag in Docker)
+USE_VESC_CONVEYOR = os.environ.get("USE_VESC_CONVEYOR", "1") != "0"
 
 
 def build_order_manager() -> OrderManager:
@@ -37,9 +42,22 @@ def build_order_manager() -> OrderManager:
         )
 
     # Lazy import so pyvesc is only loaded when actually needed.
+    import serial.serialutil
     from pi.motion.vesc_conveyor import VESCConveyor
-    conveyor = VESCConveyor()
-    conveyor.boot_check()
+    try:
+        conveyor = VESCConveyor()
+        conveyor.boot_check()
+    except serial.serialutil.SerialException as exc:
+        if not USE_MOCK:
+            # Real-driver mode: a missing VESC is fatal.
+            raise
+        log.warning(
+            f"VESCConveyor unavailable ({exc}). "
+            "Falling back to MockConveyor. "
+            "Pass --device /dev/ttyACM0:/dev/ttyACM0 to docker run "
+            "or set USE_VESC_CONVEYOR=0 to silence this warning."
+        )
+        conveyor = MockConveyor()
 
     if USE_MOCK:
         # Hardware-in-the-loop: real VESC conveyor, everything else mocked.

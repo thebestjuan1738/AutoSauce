@@ -8,6 +8,7 @@ Type=simple
 User=saucemachine
 ExecStart=/home/saucemachine/AutoSauce/pi/api/scripts/launch-backend.sh
 Restart=on-failure
+RestartSec=5
 
 [Install]
 WantedBy=multi-user.target
