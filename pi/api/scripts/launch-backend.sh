@@ -7,9 +7,14 @@ docker stop sauce-backend 2>/dev/null || true
 docker rm sauce-backend 2>/dev/null || true
 
 # Start backend container in the foreground so systemd tracks the process.
-# --device passes the VESC USB serial port into the container.
+# Pass the VESC serial port only if it exists — Python falls back to MockConveyor if not.
+DEVICE_FLAG=""
+if [ -e /dev/ttyACM0 ]; then
+    DEVICE_FLAG="--device /dev/ttyACM0:/dev/ttyACM0"
+fi
+
 exec docker run --name sauce-backend \
     -p 8080:8080 \
     -v /home/saucemachine/AutoSauce:/app \
-    --device /dev/ttyACM0:/dev/ttyACM0 \
+    $DEVICE_FLAG \
     sauce-backend
