@@ -352,7 +352,7 @@ plug a monitor into the Pi and run `hostname -I` again. Alternatively:
 ```bash
 ssh saucemachine@raspberrypi.local
 ```
-
+Its IP should be 172.28.85.104
 ### 2. Connect
 ```bash
 ssh saucemachine@<ip>
