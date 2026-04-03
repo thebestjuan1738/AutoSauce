@@ -5,30 +5,31 @@ Real hardware drivers for the SauceBot.
 Mirrors the interface of mock_drivers.py exactly — swap in main.py by setting USE_MOCK = False.
 
 Dependencies (Pi only):
-    pip install pyvesc pyserial RPi.GPIO pigpio --break-system-packages
-    sudo systemctl enable pigpiod && sudo systemctl start pigpiod
+    pip install pyvesc pyserial gpiozero lgpio --break-system-packages
 
 Hardware:
     Gantry   — Turnigy SK8 V2 VESC over UART (PyVESC), closed-loop encoder position
     Extruder — 5000 Series 12VDC motor + goBILDA 1x20A controller
-                 ESC signal ◄── GPIO 18 (hardware PWM via pigpio)
+                 ESC signal ◄── GPIO 18 (hardware PWM via gpiozero/lgpio)
                  Encoder A  ──► GPIO 23
                  Encoder B  ──► GPIO 25
     Gripper  — 5000 Series 12VDC motor + goBILDA 1x20A controller
-                 ESC signal ◄── GPIO 12 (hardware PWM via pigpio)
+                 ESC signal ◄── GPIO 12 (hardware PWM via gpiozero/lgpio)
                  Encoder A  ──► GPIO 16
                  Encoder B  ──► GPIO 20
     Conveyor — goBILDA 3105 PWM (GPIO 24)
 """
 
-import threading
 import time
-import pigpio
 import pyvesc
 from pyvesc import VESC
-import RPi.GPIO as GPIO
+from gpiozero import Device, RotaryEncoder, Servo
+from gpiozero.pins.lgpio import LGPIOFactory
 
 from pi.utils.logger import log
+
+# Use lgpio pin factory — required for Raspberry Pi 5
+Device.pin_factory = LGPIOFactory()
 
 # ─── Gantry / VESC ────────────────────────────────────────────────────────────
 SERIAL_PORT  = "/dev/ttyAMA0"
@@ -63,7 +64,7 @@ DUTY_FULL_REV = 5.5
 PIN_CONVEYOR = 24
 
 # Extruder — 5000 Series 12VDC motor + goBILDA 1x20A controller
-PIN_EXTRUDER_ESC       = 18    # PWM signal to goBILDA 1x20A controller (hardware PWM via pigpio)
+PIN_EXTRUDER_ESC       = 18    # PWM signal to goBILDA 1x20A controller (hardware PWM via gpiozero/lgpio)
 PIN_EXTRUDER_ENCODER_A = 23    # encoder channel A
 PIN_EXTRUDER_ENCODER_B = 25    # encoder channel B
 
@@ -84,7 +85,7 @@ _EXTRUDER_MOTION_TIMEOUT_S      = 5.0    # max seconds for dispense/retract move
 _EXTRUDER_POLL_S                = 0.005  # 5 ms poll interval
 
 # Gripper — 5000 Series 12VDC motor + goBILDA 1x20A controller
-PIN_GRIPPER_ESC       = 12    # PWM signal to goBILDA 1x20A controller (hardware PWM via pigpio)
+PIN_GRIPPER_ESC       = 12    # PWM signal to goBILDA 1x20A controller (hardware PWM via gpiozero/lgpio)
 PIN_GRIPPER_ENCODER_A = 16    # encoder channel A
 PIN_GRIPPER_ENCODER_B = 20    # encoder channel B
 
@@ -105,11 +106,25 @@ _GRIPPER_MOTION_TIMEOUT_S      = 5.0    # max seconds for open/close moves
 _GRIPPER_POLL_S                = 0.005  # 5 ms poll interval
 
 
+# ESC pulse range shared by extruder, gripper, and conveyor
+_ESC_MIN_US = 1100
+_ESC_MAX_US = 1900
+
 # ─── Helpers ──────────────────────────────────────────────────────────────────
+
+def _esc_value(pulse_us: int) -> float:
+    """
+    Convert an ESC pulse width (µs) to a gpiozero Servo value (-1.0 to 1.0).
+        1100 µs → -1.0  (full reverse)
+        1500 µs →  0.0  (stop / neutral)
+        1900 µs → +1.0  (full forward)
+    """
+    return (pulse_us - 1500) / 400.0
+
 
 def _speed_to_duty(speed: int) -> float:
     """
-    Map an abstract speed (0–100) to a PWM duty cycle.
+    Map an abstract speed (0–100) to a PWM duty cycle percentage.
         speed 0   → 7.5% (stop/neutral)
         speed 100 → 9.5% (full forward)
     """
@@ -373,7 +388,7 @@ class GPIOGripper:
     Controls the 5000 Series 12VDC gripper motor via a goBILDA 1x20A controller.
 
     Hardware:
-        Motor controller signal  ◄── Pi GPIO 12  (hardware PWM via pigpio)
+        Motor controller signal  ◄── Pi GPIO 12  (hardware PWM via gpiozero/lgpio)
         Encoder A                ──► Pi GPIO 16
         Encoder B                ──► Pi GPIO 20
 
@@ -383,32 +398,21 @@ class GPIOGripper:
         open()  — returns to encoder zero (open position)
 
     home() is called automatically in __init__. Call cleanup() on shutdown.
-
-    Requires pigpiod running:
-        sudo systemctl start pigpiod
     """
 
     def __init__(self):
-        self._ticks = 0
-        self._lock  = threading.Lock()
-
-        # Encoder via RPi.GPIO ISRs
-        GPIO.setmode(GPIO.BCM)
-        GPIO.setwarnings(False)
-        GPIO.setup(PIN_GRIPPER_ENCODER_A, GPIO.IN, pull_up_down=GPIO.PUD_UP)
-        GPIO.setup(PIN_GRIPPER_ENCODER_B, GPIO.IN, pull_up_down=GPIO.PUD_UP)
-        GPIO.add_event_detect(PIN_GRIPPER_ENCODER_A, GPIO.BOTH, callback=self._isr_a)
-        GPIO.add_event_detect(PIN_GRIPPER_ENCODER_B, GPIO.BOTH, callback=self._isr_b)
-
-        # ESC via pigpio hardware PWM
-        self._pi = pigpio.pi()
-        if not self._pi.connected:
-            raise RuntimeError(
-                "GPIOGripper: pigpio daemon not running — "
-                "run: sudo systemctl start pigpiod"
-            )
-
-        self._set_esc(_GRIPPER_ESC_STOP)
+        self._encoder = RotaryEncoder(
+            PIN_GRIPPER_ENCODER_A,
+            PIN_GRIPPER_ENCODER_B,
+            max_steps=10000,
+        )
+        self._esc = Servo(
+            PIN_GRIPPER_ESC,
+            initial_value=0,
+            min_pulse_width=_ESC_MIN_US / 1e6,
+            max_pulse_width=_ESC_MAX_US / 1e6,
+            frame_width=1 / PWM_FREQ,
+        )
         log.info(
             "GPIOGripper: ESC on GPIO %d, encoder on GPIO %d/%d",
             PIN_GRIPPER_ESC, PIN_GRIPPER_ENCODER_A, PIN_GRIPPER_ENCODER_B,
@@ -420,44 +424,24 @@ class GPIOGripper:
 
     def cleanup(self) -> None:
         """Disarm ESC and release GPIO resources. Call on shutdown."""
-        self._set_esc(_GRIPPER_ESC_STOP)
-        self._pi.set_servo_pulsewidth(PIN_GRIPPER_ESC, 0)
-        self._pi.stop()
-        GPIO.cleanup([PIN_GRIPPER_ENCODER_A, PIN_GRIPPER_ENCODER_B])
+        self._esc.value = 0
+        self._esc.detach()
+        self._esc.close()
+        self._encoder.close()
         log.info("GPIOGripper: cleanup done")
 
-    # ─── Encoder ISRs ─────────────────────────────────────────────────────────
-
-    def _isr_a(self, channel) -> None:
-        a = GPIO.input(PIN_GRIPPER_ENCODER_A)
-        b = GPIO.input(PIN_GRIPPER_ENCODER_B)
-        with self._lock:
-            if a == b:
-                self._ticks += 1
-            else:
-                self._ticks -= 1
-
-    def _isr_b(self, channel) -> None:
-        a = GPIO.input(PIN_GRIPPER_ENCODER_A)
-        b = GPIO.input(PIN_GRIPPER_ENCODER_B)
-        with self._lock:
-            if a != b:
-                self._ticks += 1
-            else:
-                self._ticks -= 1
+    # ─── Encoder ──────────────────────────────────────────────────────────────
 
     def _get_ticks(self) -> int:
-        with self._lock:
-            return self._ticks
+        return self._encoder.steps
 
     def _zero_ticks(self) -> None:
-        with self._lock:
-            self._ticks = 0
+        self._encoder.steps = 0
 
     # ─── ESC control ──────────────────────────────────────────────────────────
 
     def _set_esc(self, pulse_us: int) -> None:
-        self._pi.set_servo_pulsewidth(PIN_GRIPPER_ESC, pulse_us)
+        self._esc.value = _esc_value(pulse_us)
 
     # ─── Motion ───────────────────────────────────────────────────────────────
 
@@ -554,31 +538,36 @@ class GPIOConveyor:
     """
 
     def __init__(self):
-        GPIO.setmode(GPIO.BCM)
-        GPIO.setup(PIN_CONVEYOR, GPIO.OUT)
-        self._pwm = GPIO.PWM(PIN_CONVEYOR, PWM_FREQ)
-        self._pwm.start(DUTY_STOP)
+        self._servo = Servo(
+            PIN_CONVEYOR,
+            initial_value=0,
+            min_pulse_width=_ESC_MIN_US / 1e6,
+            max_pulse_width=_ESC_MAX_US / 1e6,
+            frame_width=1 / PWM_FREQ,
+        )
 
         # ── Arming sequence (uncomment if the goBILDA controller requires it) ──
         #
         # log.info("GPIOConveyor: arming ESC...")
-        # self._pwm.ChangeDutyCycle(DUTY_FULL_FWD)
+        # self._servo.value = _esc_value(int(DUTY_FULL_FWD * 200))   # full fwd
         # time.sleep(2.0)
-        # self._pwm.ChangeDutyCycle(DUTY_FULL_REV)
+        # self._servo.value = _esc_value(int(DUTY_FULL_REV * 200))   # full rev
         # time.sleep(2.0)
-        # self._pwm.ChangeDutyCycle(DUTY_STOP)
+        # self._servo.value = 0                                       # stop
         # time.sleep(1.0)
         # log.info("GPIOConveyor: armed")
 
-        log.info("GPIOConveyor: PWM started on GPIO %d", PIN_CONVEYOR)
+        log.info("GPIOConveyor: servo PWM started on GPIO %d", PIN_CONVEYOR)
 
     def start(self, speed: int) -> None:
         """Set conveyor belt to the given speed (0–100)."""
-        duty = _speed_to_duty(speed)
-        log.info("GPIOConveyor: starting at speed %d (duty %.2f%%)", speed, duty)
-        self._pwm.ChangeDutyCycle(duty)
+        duty_pct = _speed_to_duty(speed)
+        # duty% at 50 Hz → pulse width: duty% × 200 = pulse µs
+        val = _esc_value(int(duty_pct * 200))
+        log.info("GPIOConveyor: starting at speed %d (servo value %.4f)", speed, val)
+        self._servo.value = val
 
     def stop(self) -> None:
         """Stop the conveyor belt."""
+        self._servo.value = 0
         log.info("GPIOConveyor: stopped")
-        self._pwm.ChangeDutyCycle(DUTY_STOP)
