@@ -25,14 +25,14 @@ POSITIONS = {
 }
 
 # ─── Gripper (encoder-based, no timing config needed) ────────────────────────
-# Tune _GRIPPER_CLOSE_TARGET_TICKS in gpio_drivers.py if grip depth needs adjusting.
+# Tune _CLOSE_TARGET_TICKS in pi/motion/gripper.py if grip depth needs adjusting.
 
 # ─── Coverage profiles ────────────────────────────────────────────────────────
 # conveyor_speed : 0–100 abstract speed unit, maps to PWM duty cycle in driver
 # conveyor_ms    : how long the conveyor runs (sandwich must fully clear)
 #
 # Extruder dispenses a fixed encoder-position amount (see _EXTRUDER_DISPENSE_TARGET_TICKS
-# in gpio_drivers.py). Extruder finishes first; conveyor keeps running until conveyor_ms.
+# in pi/motion/extruder.py). Extruder finishes first; conveyor keeps running until conveyor_ms.
 #
 COVERAGE_PROFILES = {
     "light":  {"conveyor_speed": 80, "conveyor_ms": 3000},

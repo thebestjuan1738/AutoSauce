@@ -69,12 +69,10 @@ def build_order_manager() -> OrderManager:
         )
 
     # Full real drivers (Pi only).
-    from pi.motion.gpio_drivers import (
-        GPIOGantry,
-        GPIOExtruder,
-        GPIOGripper,
-        GPIOConveyor,
-    )
+    from pi.motion.gantry   import GPIOGantry
+    from pi.motion.extruder import GPIOExtruder
+    from pi.motion.gripper  import GPIOGripper
+    from pi.motion.conveyor import GPIOConveyor
     return OrderManager(
         gantry=GPIOGantry(),
         gripper=GPIOGripper(),

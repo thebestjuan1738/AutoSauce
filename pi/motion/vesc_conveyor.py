@@ -1,5 +1,5 @@
 """
-vesc_conveyor.py
+vesc_conveyor.py (LEGACY)
 
 Conveyor driver for a NEO rev brushless motor controlled by a VESC over USB serial.
 Implements the same start(speed) / stop() interface as MockConveyor.
