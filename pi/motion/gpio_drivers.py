@@ -25,6 +25,8 @@ import pyvesc
 from pyvesc import VESC
 from gpiozero import Device, RotaryEncoder, Servo
 from gpiozero.pins.lgpio import LGPIOFactory
+import RPi.GPIO as GPIO
+import threading
 
 from pi.utils.logger import log
 
@@ -219,9 +221,6 @@ class GPIOExtruder:
         retract()  — returns plunger to encoder zero (fully retracted)
 
     home() is called automatically in __init__. Call cleanup() on shutdown.
-
-    Requires pigpiod running:
-        sudo systemctl start pigpiod
     """
 
     def __init__(self):
@@ -236,13 +235,14 @@ class GPIOExtruder:
         GPIO.add_event_detect(PIN_EXTRUDER_ENCODER_A, GPIO.BOTH, callback=self._isr_a)
         GPIO.add_event_detect(PIN_EXTRUDER_ENCODER_B, GPIO.BOTH, callback=self._isr_b)
 
-        # ESC via pigpio hardware PWM
-        self._pi = pigpio.pi()
-        if not self._pi.connected:
-            raise RuntimeError(
-                "GPIOExtruder: pigpio daemon not running — "
-                "run: sudo systemctl start pigpiod"
-            )
+        # ESC via gpiozero Servo PWM
+        self._esc = Servo(
+            PIN_EXTRUDER_ESC,
+            initial_value=0,
+            min_pulse_width=_ESC_MIN_US / 1e6,
+            max_pulse_width=_ESC_MAX_US / 1e6,
+            frame_width=1 / PWM_FREQ,
+        )
 
         self._set_esc(_EXTRUDER_ESC_STOP)
         log.info(
@@ -257,8 +257,9 @@ class GPIOExtruder:
     def cleanup(self) -> None:
         """Disarm ESC and release GPIO resources. Call on shutdown."""
         self._set_esc(_EXTRUDER_ESC_STOP)
-        self._pi.set_servo_pulsewidth(PIN_EXTRUDER_ESC, 0)
-        self._pi.stop()
+        self._esc.value = 0
+        self._esc.detach()
+        self._esc.close()
         GPIO.cleanup([PIN_EXTRUDER_ENCODER_A, PIN_EXTRUDER_ENCODER_B])
         log.info("GPIOExtruder: cleanup done")
 
@@ -293,7 +294,7 @@ class GPIOExtruder:
     # ─── ESC control ──────────────────────────────────────────────────────────
 
     def _set_esc(self, pulse_us: int) -> None:
-        self._pi.set_servo_pulsewidth(PIN_EXTRUDER_ESC, pulse_us)
+        self._esc.value = _esc_value(pulse_us)
 
     # ─── Motion ───────────────────────────────────────────────────────────────
 

@@ -37,7 +37,7 @@ def build_order_manager() -> OrderManager:
         return OrderManager(
             gantry=MockGantry(),
             gripper=MockGripper(),
-            extruder=MockExtruder(),
+            extruder=GPIOExtruder(),
             conveyor=MockConveyor(),
         )
 
