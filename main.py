@@ -33,13 +33,14 @@ USE_VESC_CONVEYOR = os.environ.get("USE_VESC_CONVEYOR", "1") != "0"
 
 
 def build_order_manager() -> OrderManager:
-    if USE_MOCK and not USE_VESC_CONVEYOR:
-        return OrderManager(
-            gantry=MockGantry(),
-            gripper=GPIOGripper(),
-            extruder=MockExtruder(),
-            conveyor=MockConveyor(),
-        )
+    from pi.motion.mock_drivers import MockGantry, MockExtruder, MockConveyor
+    from pi.motion.gripper import GPIOGripper
+    return OrderManager(
+        gantry=MockGantry(),
+        gripper=GPIOGripper(),
+        extruder=MockExtruder(),
+        conveyor=MockConveyor(),
+    )
 
     # Lazy import so pyvesc is only loaded when actually needed.
     import serial.serialutil
