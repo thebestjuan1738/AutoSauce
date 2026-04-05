@@ -10,7 +10,7 @@ Hardware:
 import time
 import threading
 
-import RPi.GPIO as GPIO
+import lgpio
 from gpiozero import Servo
 
 from pi.utils.logger import log
@@ -59,13 +59,12 @@ class GPIOGripper:
         self._ticks = 0
         self._lock  = threading.Lock()
 
-        # Encoder via RPi.GPIO ISRs
-        GPIO.setmode(GPIO.BCM)
-        GPIO.setwarnings(False)
-        GPIO.setup(PIN_ENCODER_A, GPIO.IN, pull_up_down=GPIO.PUD_UP)
-        GPIO.setup(PIN_ENCODER_B, GPIO.IN, pull_up_down=GPIO.PUD_UP)
-        GPIO.add_event_detect(PIN_ENCODER_A, GPIO.BOTH, callback=self._isr_a)
-        GPIO.add_event_detect(PIN_ENCODER_B, GPIO.BOTH, callback=self._isr_b)
+        # Encoder via lgpio ISRs (Pi 5 compatible)
+        self._h = lgpio.gpiochip_open(0)
+        lgpio.gpio_claim_input(self._h, PIN_ENCODER_A, lgpio.SET_PULL_UP)
+        lgpio.gpio_claim_input(self._h, PIN_ENCODER_B, lgpio.SET_PULL_UP)
+        self._cb_a = lgpio.callback(self._h, PIN_ENCODER_A, lgpio.BOTH_EDGES, self._isr_a)
+        self._cb_b = lgpio.callback(self._h, PIN_ENCODER_B, lgpio.BOTH_EDGES, self._isr_b)
 
         # ESC via gpiozero Servo PWM
         self._esc = Servo(
@@ -92,23 +91,25 @@ class GPIOGripper:
         self._esc.value = 0
         self._esc.detach()
         self._esc.close()
-        GPIO.cleanup([PIN_ENCODER_A, PIN_ENCODER_B])
+        self._cb_a.cancel()
+        self._cb_b.cancel()
+        lgpio.gpiochip_close(self._h)
         log.info("GPIOGripper: cleanup done")
 
     # ─── Encoder ISRs ─────────────────────────────────────────────────────────
 
-    def _isr_a(self, channel) -> None:
-        a = GPIO.input(PIN_ENCODER_A)
-        b = GPIO.input(PIN_ENCODER_B)
+    def _isr_a(self, chip, gpio, level, tick) -> None:
+        a = lgpio.gpio_read(self._h, PIN_ENCODER_A)
+        b = lgpio.gpio_read(self._h, PIN_ENCODER_B)
         with self._lock:
             if a == b:
                 self._ticks += 1
             else:
                 self._ticks -= 1
 
-    def _isr_b(self, channel) -> None:
-        a = GPIO.input(PIN_ENCODER_A)
-        b = GPIO.input(PIN_ENCODER_B)
+    def _isr_b(self, chip, gpio, level, tick) -> None:
+        a = lgpio.gpio_read(self._h, PIN_ENCODER_A)
+        b = lgpio.gpio_read(self._h, PIN_ENCODER_B)
         with self._lock:
             if a != b:
                 self._ticks += 1
