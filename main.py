@@ -36,8 +36,8 @@ def build_order_manager() -> OrderManager:
     if USE_MOCK and not USE_VESC_CONVEYOR:
         return OrderManager(
             gantry=MockGantry(),
-            gripper=MockGripper(),
-            extruder=GPIOExtruder(),
+            gripper=GPIOGripper(),
+            extruder=MockExtruder(),
             conveyor=MockConveyor(),
         )
 
