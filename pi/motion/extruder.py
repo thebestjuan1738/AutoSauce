@@ -81,11 +81,7 @@ class GPIOExtruder:
             "GPIOExtruder: ESC on GPIO %d, encoder on GPIO %d/%d",
             PIN_ESC, PIN_ENCODER_A, PIN_ENCODER_B,
         )
-        log.info("GPIOExtruder: arming ESC (max, min, stop)...")
-        self._set_esc(_ESC_MAX_US)
-        time.sleep(2.0)
-        self._set_esc(_ESC_MIN_US)
-        time.sleep(2.0)
+        log.info("GPIOExtruder: arming ESC (holding stop/neutral)...")
         self._set_esc(_ESC_STOP)
         time.sleep(2.0)
         log.info("GPIOExtruder: ESC armed")
