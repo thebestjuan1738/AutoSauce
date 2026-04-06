@@ -76,13 +76,18 @@ class GPIOGripper:
             frame_width=1 / PWM_FREQ,
         )
 
-        self._set_esc(_ESC_STOP)
         log.info(
             "GPIOGripper: ESC on GPIO %d, encoder on GPIO %d/%d",
             PIN_ESC, PIN_ENCODER_A, PIN_ENCODER_B,
         )
-        log.info("GPIOGripper: waiting 2s for ESC to arm...")
+        log.info("GPIOGripper: arming ESC (max, min, stop)...")
+        self._set_esc(_ESC_MAX_US)
         time.sleep(2.0)
+        self._set_esc(_ESC_MIN_US)
+        time.sleep(2.0)
+        self._set_esc(_ESC_STOP)
+        time.sleep(2.0)
+        log.info("GPIOGripper: ESC armed")
 
         self.home()
 
