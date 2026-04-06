@@ -16,6 +16,10 @@ from gpiozero import Servo
 from pi.utils.logger import log
 from pi.motion._shared import PWM_FREQ, _ESC_MIN_US, _ESC_MAX_US, _esc_value
 
+# ─── GPIO chip (BCM numbering) ───────────────────────────────────────────────
+# Pi 5 uses gpiochip4 for the 40-pin header; Pi 4 uses gpiochip0
+_GPIOCHIP = 4
+
 # ─── GPIO pin assignments (BCM numbering) ─────────────────────────────────────
 PIN_ESC       = 12    # PWM signal to goBILDA 1x20A controller
 PIN_ENCODER_A = 16    # encoder channel A
@@ -60,7 +64,7 @@ class GPIOGripper:
         self._lock  = threading.Lock()
 
         # Encoder via lgpio ISRs (Pi 5 compatible)
-        self._h = lgpio.gpiochip_open(0)
+        self._h = lgpio.gpiochip_open(_GPIOCHIP)
         lgpio.gpio_claim_input(self._h, PIN_ENCODER_A, lgpio.SET_PULL_UP)
         lgpio.gpio_claim_input(self._h, PIN_ENCODER_B, lgpio.SET_PULL_UP)
         self._cb_a = lgpio.callback(self._h, PIN_ENCODER_A, lgpio.BOTH_EDGES, self._isr_a)
