@@ -131,10 +131,7 @@ class GPIOGripper:
     # ─── ESC control ──────────────────────────────────────────────────────────
 
     def _set_esc(self, pulse_us: int) -> None:
-        if pulse_us == _ESC_STOP:
-            self._esc.detach()  # Cut PWM signal entirely to prevent software PWM jitter
-        else:
-            self._esc.value = _esc_value(pulse_us)
+        self._esc.value = _esc_value(pulse_us)
 
     # ─── Motion ───────────────────────────────────────────────────────────────
 
