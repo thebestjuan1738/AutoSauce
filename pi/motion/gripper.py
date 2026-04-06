@@ -203,15 +203,14 @@ class GPIOGripper:
 
         log.info("GPIOGripper: homing — phase 3 (closing to find close limit)...")
         
-        # Record the start time BEFORE moving so we don't inadvertently stall during a long sleep
-        last_ticks = self._get_ticks()
-        last_move_time = time.time()
-        
         self._set_esc(_ESC_CLOSE_FAST)
         
-        # Wait a very brief amount of time for it to begin moving (instead of 1.0s which was
-        # hiding the movement from the stall detector because it had already finished moving!)
-        time.sleep(0.2) 
+        # Wait a moment for it to overcome inertia and start moving
+        time.sleep(0.5) 
+        
+        # Start tracking stall AFTER the initial movement period
+        last_ticks = self._get_ticks()
+        last_move_time = time.time()
         
         start = time.time()
         while True:
@@ -245,12 +244,12 @@ class GPIOGripper:
         # Bypassing the immediate target=0 check incase inertia takes a second to register
         time.sleep(1.0)
         
-        while self._get_ticks() < 2000:  # Minimum open distance
+        while self._get_ticks() < -100:  # Adding a tiny buffer so it doesn't instantly think it's done at -70
             if time.time() - start > _MOTION_TIMEOUT_S:
                 self._set_esc(_ESC_STOP)
                 raise RuntimeError(
                     f"GPIOGripper: open timed out after {_MOTION_TIMEOUT_S}s "
-                    f"(ticks={self._get_ticks()}, target=2000)"
+                    f"(ticks={self._get_ticks()}, target=0)"
                 )
             time.sleep(_POLL_S)
 
