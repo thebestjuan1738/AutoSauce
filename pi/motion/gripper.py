@@ -133,10 +133,17 @@ class GPIOGripper:
 
     def home(self) -> None:
         """
+        Pre-move: nudge closed briefly to clear the mechanical open stop.
         Phase 1: strong open torque until movement is detected.
         Phase 2: slow creep until stall at mechanical open limit.
         Zeroes the encoder once stall is confirmed.
         """
+        log.info("GPIOGripper: homing — pre-close nudge (clearing open stop)...")
+        self._set_esc(_ESC_CLOSE_FAST)
+        time.sleep(0.3)
+        self._set_esc(_ESC_STOP)
+        time.sleep(0.1)
+
         log.info("GPIOGripper: homing — phase 1 (strong open torque)...")
         last_ticks = self._get_ticks()
 

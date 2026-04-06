@@ -13,8 +13,8 @@ if [ -e /dev/ttyACM0 ]; then
     DEVICE_FLAG="--device /dev/ttyACM0:/dev/ttyACM0"
 fi
 
-exec docker run --name sauce-backend \
-    -p 8080:8080 \
-    -v /home/saucemachine/AutoSauce:/app \
-    $DEVICE_FLAG \
-    sauce-backend
+#exec docker run --name sauce-backend \
+#    -p 8080:8080 \
+#    -v /home/saucemachine/AutoSauce:/app \
+#    $DEVICE_FLAG \
+#    sauce-backend
