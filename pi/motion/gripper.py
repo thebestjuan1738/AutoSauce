@@ -59,6 +59,11 @@ class GPIOGripper:
         self._ticks = 0
         self._lock  = threading.Lock()
         self.close_limit_ticks = None
+        
+        # Active hold mechanism for open state
+        self._hold_target = None
+        self._holding = False
+        self._hold_thread = threading.Thread(target=self._hold_loop, daemon=True)
 
         # Encoder via RPi.GPIO ISRs
         GPIO.setmode(GPIO.BCM)
@@ -88,12 +93,29 @@ class GPIOGripper:
         log.info("GPIOGripper: arming ESC (holding stop/neutral)...")
         self._set_esc(_ESC_STOP)
         time.sleep(2.0)
+        self._hold_thread.start()
         log.info("GPIOGripper: ESC armed")
 
         self.home()
 
+    def _hold_loop(self) -> None:
+        """Background thread that actively fights drift after opening."""
+        while True:
+            if self._holding and self._hold_target is not None:
+                current = self._get_ticks()
+                error = self._hold_target - current
+                # Deadband of +/- 30 ticks
+                if error > 30:   # drifted closed (ticks more negative) -> nudge open
+                    self._set_esc(_ESC_OPEN_SLOW)  # usually 1550
+                elif error < -30: # drifted open -> nudge close gently
+                    self._set_esc(1450)
+                else:            # within deadband -> stop applying power
+                    self._set_esc(_ESC_STOP)
+            time.sleep(0.05)
+
     def cleanup(self) -> None:
         """Disarm ESC and release GPIO resources. Call on shutdown."""
+        self._holding = False
         self._set_esc(_ESC_STOP)
         self._esc.value = 0
         self._esc.detach()
@@ -145,6 +167,8 @@ class GPIOGripper:
         Phase 3: slow creep to determine mechanical closed limit.
         Phase 4: Return to open position.
         """
+        self._holding = False
+        
         # Detect current position to handle different starting states
         current_ticks = self._get_ticks()
         log.info("GPIOGripper: homing — starting at ticks=%d", current_ticks)
@@ -237,6 +261,7 @@ class GPIOGripper:
 
     def open(self) -> None:
         """Fast return to encoder zero (open position)."""
+        self._holding = False
         log.info("GPIOGripper: opening (current ticks: %d)", self._get_ticks())
         start = time.time()
 
@@ -255,10 +280,13 @@ class GPIOGripper:
 
         self._set_esc(_ESC_STOP)
         time.sleep(0.15)
-        log.info("GPIOGripper: open done (ticks=%d)", self._get_ticks())
+        self._hold_target = self._get_ticks()
+        self._holding = True
+        log.info("GPIOGripper: open done (ticks=%d, tracking position)", self._hold_target)
 
     def close(self) -> None:
         """Fast close until it stalls against an object (grabbing)."""
+        self._holding = False
         log.info("GPIOGripper: closing until stall (grabbing object)...")
         start = time.time()
         
