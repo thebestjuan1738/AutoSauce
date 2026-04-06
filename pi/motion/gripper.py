@@ -190,7 +190,10 @@ class GPIOGripper:
         start = time.time()
 
         self._set_esc(_ESC_OPEN_FAST)
-        while self._get_ticks() < 0:
+        # Bypassing the immediate target=0 check incase inertia takes a second to register
+        time.sleep(1.0)
+        
+        while self._get_ticks() < -100:  # Adding a tiny buffer so it doesn't instantly think it's done at -70
             if time.time() - start > _MOTION_TIMEOUT_S:
                 self._set_esc(_ESC_STOP)
                 raise RuntimeError(
@@ -210,7 +213,7 @@ class GPIOGripper:
         
         self._set_esc(_ESC_CLOSE_FAST)
         # Give motor a solid moment to overcome inertia before tracking stalls
-        time.sleep(0.5)
+        time.sleep(1.0)
         
         last_ticks = self._get_ticks()
         last_move_time = time.time()
