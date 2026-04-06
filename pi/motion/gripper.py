@@ -58,6 +58,7 @@ class GPIOGripper:
     def __init__(self):
         self._ticks = 0
         self._lock  = threading.Lock()
+        self.close_limit_ticks = None
 
         # Encoder via RPi.GPIO ISRs
         GPIO.setmode(GPIO.BCM)
@@ -141,6 +142,8 @@ class GPIOGripper:
         Phase 1: strong open torque until movement is detected.
         Phase 2: slow creep until stall at mechanical open limit.
         Zeroes the encoder once stall is confirmed.
+        Phase 3: slow creep to determine mechanical closed limit.
+        Phase 4: Return to open position.
         """
         log.info("GPIOGripper: homing — pre-close nudge (clearing open stop)...")
         self._set_esc(_ESC_CLOSE_FAST)
@@ -187,10 +190,40 @@ class GPIOGripper:
                 self._set_esc(_ESC_STOP)
                 time.sleep(0.2)
                 self._zero_ticks()
-                log.info("GPIOGripper: homing complete — encoder zeroed")
-                return
+                log.info("GPIOGripper: open limit established — encoder zeroed")
+                break
 
             time.sleep(_POLL_S)
+
+        log.info("GPIOGripper: homing — phase 3 (closing to find close limit)...")
+        self._set_esc(_ESC_CLOSE_FAST)
+        time.sleep(1.0) # wait to clear open boundary inertia
+        
+        last_ticks = self._get_ticks()
+        last_move_time = time.time()
+        
+        start = time.time()
+        while True:
+            current = self._get_ticks()
+            if current != last_ticks:
+                last_ticks = current
+                last_move_time = time.time()
+
+            if (time.time() - last_move_time) * 1000 > 400:
+                self._set_esc(_ESC_STOP)
+                self.close_limit_ticks = self._get_ticks()
+                time.sleep(0.2)
+                log.info("GPIOGripper: close limit established at %d ticks", self.close_limit_ticks)
+                break
+            
+            if time.time() - start > 15.0:
+                self._set_esc(_ESC_STOP)
+                raise RuntimeError("GPIOGripper: timed out finding close limit")
+            
+            time.sleep(_POLL_S)
+            
+        log.info("GPIOGripper: homing — phase 4 (returning to open limit)...")
+        self.open()
 
     def open(self) -> None:
         """Fast return to encoder zero (open position)."""
