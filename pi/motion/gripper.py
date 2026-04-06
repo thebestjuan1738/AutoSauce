@@ -10,15 +10,11 @@ Hardware:
 import time
 import threading
 
-import lgpio
+import RPi.GPIO as GPIO
 from gpiozero import Servo
 
 from pi.utils.logger import log
 from pi.motion._shared import PWM_FREQ, _ESC_MIN_US, _ESC_MAX_US, _esc_value
-
-# ─── GPIO chip (BCM numbering) ───────────────────────────────────────────────
-# Pi 5 uses gpiochip4 for the 40-pin header; Pi 4 uses gpiochip0
-_GPIOCHIP = 4
 
 # ─── GPIO pin assignments (BCM numbering) ─────────────────────────────────────
 PIN_ESC       = 12    # PWM signal to goBILDA 1x20A controller
@@ -63,15 +59,13 @@ class GPIOGripper:
         self._ticks = 0
         self._lock  = threading.Lock()
 
-        # Encoder via lgpio ISRs (Pi 5 compatible)
-        # gpio_claim_alert (not gpio_claim_input) is required to enable edge
-        # detection; gpio_claim_input only configures a plain readable input and
-        # callbacks registered on it will never fire.
-        self._h = lgpio.gpiochip_open(_GPIOCHIP)
-        lgpio.gpio_claim_alert(self._h, PIN_ENCODER_A, lgpio.BOTH_EDGES, lgpio.SET_PULL_UP)
-        lgpio.gpio_claim_alert(self._h, PIN_ENCODER_B, lgpio.BOTH_EDGES, lgpio.SET_PULL_UP)
-        self._cb_a = lgpio.callback(self._h, PIN_ENCODER_A, lgpio.BOTH_EDGES, self._isr_a)
-        self._cb_b = lgpio.callback(self._h, PIN_ENCODER_B, lgpio.BOTH_EDGES, self._isr_b)
+        # Encoder via RPi.GPIO ISRs
+        GPIO.setmode(GPIO.BCM)
+        GPIO.setwarnings(False)
+        GPIO.setup(PIN_ENCODER_A, GPIO.IN, pull_up_down=GPIO.PUD_UP)
+        GPIO.setup(PIN_ENCODER_B, GPIO.IN, pull_up_down=GPIO.PUD_UP)
+        GPIO.add_event_detect(PIN_ENCODER_A, GPIO.BOTH, callback=self._isr_a)
+        GPIO.add_event_detect(PIN_ENCODER_B, GPIO.BOTH, callback=self._isr_b)
 
         # ESC via gpiozero Servo PWM
         self._esc = Servo(
@@ -98,25 +92,23 @@ class GPIOGripper:
         self._esc.value = 0
         self._esc.detach()
         self._esc.close()
-        self._cb_a.cancel()
-        self._cb_b.cancel()
-        lgpio.gpiochip_close(self._h)
+        GPIO.cleanup([PIN_ENCODER_A, PIN_ENCODER_B])
         log.info("GPIOGripper: cleanup done")
 
     # ─── Encoder ISRs ─────────────────────────────────────────────────────────
 
-    def _isr_a(self, chip, gpio, level, tick) -> None:
-        a = lgpio.gpio_read(self._h, PIN_ENCODER_A)
-        b = lgpio.gpio_read(self._h, PIN_ENCODER_B)
+    def _isr_a(self, channel) -> None:
+        a = GPIO.input(PIN_ENCODER_A)
+        b = GPIO.input(PIN_ENCODER_B)
         with self._lock:
             if a == b:
                 self._ticks += 1
             else:
                 self._ticks -= 1
 
-    def _isr_b(self, chip, gpio, level, tick) -> None:
-        a = lgpio.gpio_read(self._h, PIN_ENCODER_A)
-        b = lgpio.gpio_read(self._h, PIN_ENCODER_B)
+    def _isr_b(self, channel) -> None:
+        a = GPIO.input(PIN_ENCODER_A)
+        b = GPIO.input(PIN_ENCODER_B)
         with self._lock:
             if a != b:
                 self._ticks += 1
