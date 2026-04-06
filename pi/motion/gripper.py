@@ -23,7 +23,7 @@ PIN_ENCODER_B = 20    # encoder channel B
 
 # ─── ESC pulse widths (microseconds) ──────────────────────────────────────────
 _ESC_STOP        = 1500
-_ESC_OPEN_STRONG = 1700   # strong torque, homing phase 1
+_ESC_OPEN_STRONG = 1650   # strong torque, homing phase 1
 _ESC_OPEN_SLOW   = 1550   # slow creep, homing phase 2
 _ESC_OPEN_FAST   = 1650   # fast return to zero
 _ESC_CLOSE_FAST  = 1350   # fast close to target
