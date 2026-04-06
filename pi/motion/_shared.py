@@ -1,9 +1,16 @@
 """
 _shared.py — Shared constants and helpers used across GPIO motion drivers.
 """
+import warnings
 
 from gpiozero import Device
 from gpiozero.pins.lgpio import LGPIOFactory
+
+# Suppress the "PWMSoftwareFallback" warning. 
+# Pi 5's lgpio pin factory falls back to software PWM under the hood,
+# which works well enough for standard ESCs at 50Hz, so the warning is just noise.
+from gpiozero.output_devices import PWMSoftwareFallback
+warnings.filterwarnings("ignore", category=PWMSoftwareFallback)
 
 # Use lgpio pin factory — required for Raspberry Pi 5
 Device.pin_factory = LGPIOFactory()
