@@ -153,6 +153,10 @@ class GPIOGripper:
 
         start = time.time()
         self._set_esc(_ESC_OPEN_STRONG)
+        
+        # Give it a tiny moment to build speed before checking first tick
+        time.sleep(0.2)
+        
         while True:
             if self._get_ticks() != last_ticks:
                 break
@@ -165,17 +169,21 @@ class GPIOGripper:
             time.sleep(_POLL_S)
 
         log.info("GPIOGripper: homing — phase 2 (slow creep to limit)...")
+        self._set_esc(_ESC_OPEN_SLOW)
+        
+        # Allow inertia to transfer before checking for stalls
+        time.sleep(0.5)
+        
         last_ticks     = self._get_ticks()
         last_move_time = time.time()
 
-        self._set_esc(_ESC_OPEN_SLOW)
         while True:
             current = self._get_ticks()
             if current != last_ticks:
                 last_ticks     = current
                 last_move_time = time.time()
 
-            if (time.time() - last_move_time) * 1000 > _STALL_DETECT_MS:
+            if (time.time() - last_move_time) * 1000 > 400: # Increased from 200ms to 400ms for safety
                 self._set_esc(_ESC_STOP)
                 time.sleep(0.2)
                 self._zero_ticks()
