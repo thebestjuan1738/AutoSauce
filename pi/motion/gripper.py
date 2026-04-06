@@ -64,9 +64,12 @@ class GPIOGripper:
         self._lock  = threading.Lock()
 
         # Encoder via lgpio ISRs (Pi 5 compatible)
+        # gpio_claim_alert (not gpio_claim_input) is required to enable edge
+        # detection; gpio_claim_input only configures a plain readable input and
+        # callbacks registered on it will never fire.
         self._h = lgpio.gpiochip_open(_GPIOCHIP)
-        lgpio.gpio_claim_input(self._h, PIN_ENCODER_A, lgpio.SET_PULL_UP)
-        lgpio.gpio_claim_input(self._h, PIN_ENCODER_B, lgpio.SET_PULL_UP)
+        lgpio.gpio_claim_alert(self._h, PIN_ENCODER_A, lgpio.BOTH_EDGES, lgpio.SET_PULL_UP)
+        lgpio.gpio_claim_alert(self._h, PIN_ENCODER_B, lgpio.BOTH_EDGES, lgpio.SET_PULL_UP)
         self._cb_a = lgpio.callback(self._h, PIN_ENCODER_A, lgpio.BOTH_EDGES, self._isr_a)
         self._cb_b = lgpio.callback(self._h, PIN_ENCODER_B, lgpio.BOTH_EDGES, self._isr_b)
 
