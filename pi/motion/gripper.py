@@ -204,23 +204,34 @@ class GPIOGripper:
         log.info("GPIOGripper: open done (ticks=%d)", self._get_ticks())
 
     def close(self) -> None:
-        """Fast close to _CLOSE_TARGET_TICKS (1.6 revolutions)."""
-        log.info(
-            "GPIOGripper: closing to %d ticks (current: %d)",
-            _CLOSE_TARGET_TICKS, self._get_ticks(),
-        )
+        """Fast close until it stalls against an object (grabbing)."""
+        log.info("GPIOGripper: closing until stall (grabbing object)...")
         start = time.time()
-
+        
         self._set_esc(_ESC_CLOSE_FAST)
-        while self._get_ticks() > _CLOSE_TARGET_TICKS:
-            if time.time() - start > _MOTION_TIMEOUT_S:
+        # Give motor a brief moment to start moving before we start checking for stalls
+        time.sleep(0.2)
+        
+        last_ticks = self._get_ticks()
+        last_move_time = time.time()
+
+        while True:
+            current = self._get_ticks()
+            if current != last_ticks:
+                last_ticks = current
+                last_move_time = time.time()
+
+            if (time.time() - last_move_time) * 1000 > _STALL_DETECT_MS:
+                self._set_esc(_ESC_STOP)
+                time.sleep(0.15)
+                log.info("GPIOGripper: close grabbed/stalled at %d ticks", self._get_ticks())
+                return
+
+            # Keep a generous absolute maximum timeout just in case the encoder completely breaks
+            if time.time() - start > 15.0:
                 self._set_esc(_ESC_STOP)
                 raise RuntimeError(
-                    f"GPIOGripper: close timed out after {_MOTION_TIMEOUT_S}s "
-                    f"(ticks={self._get_ticks()}, target={_CLOSE_TARGET_TICKS})"
+                    f"GPIOGripper: close timed out after 15.0s "
+                    f"(ticks={self._get_ticks()})"
                 )
             time.sleep(_POLL_S)
-
-        self._set_esc(_ESC_STOP)
-        time.sleep(0.15)
-        log.info("GPIOGripper: close done (ticks=%d)", self._get_ticks())
