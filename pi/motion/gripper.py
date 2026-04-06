@@ -152,8 +152,8 @@ class GPIOGripper:
         last_ticks = self._get_ticks()
 
         start = time.time()
+        self._set_esc(_ESC_OPEN_STRONG)
         while True:
-            self._set_esc(_ESC_OPEN_STRONG)
             if self._get_ticks() != last_ticks:
                 break
             if time.time() - start > _HOME_PHASE1_TIMEOUT_S:
@@ -168,8 +168,8 @@ class GPIOGripper:
         last_ticks     = self._get_ticks()
         last_move_time = time.time()
 
+        self._set_esc(_ESC_OPEN_SLOW)
         while True:
-            self._set_esc(_ESC_OPEN_SLOW)
             current = self._get_ticks()
             if current != last_ticks:
                 last_ticks     = current
@@ -189,8 +189,8 @@ class GPIOGripper:
         log.info("GPIOGripper: opening (current ticks: %d)", self._get_ticks())
         start = time.time()
 
+        self._set_esc(_ESC_OPEN_FAST)
         while self._get_ticks() < 0:
-            self._set_esc(_ESC_OPEN_FAST)
             if time.time() - start > _MOTION_TIMEOUT_S:
                 self._set_esc(_ESC_STOP)
                 raise RuntimeError(
@@ -211,8 +211,8 @@ class GPIOGripper:
         )
         start = time.time()
 
+        self._set_esc(_ESC_CLOSE_FAST)
         while self._get_ticks() > _CLOSE_TARGET_TICKS:
-            self._set_esc(_ESC_CLOSE_FAST)
             if time.time() - start > _MOTION_TIMEOUT_S:
                 self._set_esc(_ESC_STOP)
                 raise RuntimeError(
