@@ -231,37 +231,20 @@ class GPIOGripper:
         start = time.time()
 
         self._set_esc(_ESC_OPEN_FAST)
-        # Prevent immediate limit triggering
-        time.sleep(0.2)
+        # Bypassing the immediate target=0 check incase inertia takes a second to register
+        time.sleep(1.0)
         
-        last_ticks = self._get_ticks()
-        last_move_time = time.time()
-        
-        while True:
-            current = self._get_ticks()
-            
-            # Since opening pushes ticks deeply negative, boundary crossing safely stops continuous slipping
-            if current < -50:
-                log.info("GPIOGripper: open boundary crossed (passed 0)")
-                break
-                
-            if current != last_ticks:
-                last_ticks = current
-                last_move_time = time.time()
-
-            if (time.time() - last_move_time) * 1000 > 400:
-                log.info("GPIOGripper: open stalled at mechanical limit.")
-                break
-
+        while self._get_ticks() > -100:  # Adding a tiny buffer so it doesn't instantly think it's done at -70
             if time.time() - start > _MOTION_TIMEOUT_S:
-                log.warning("GPIOGripper: open timed out (ticks=%d)", current)
-                break
-                
+                self._set_esc(_ESC_STOP)
+                raise RuntimeError(
+                    f"GPIOGripper: open timed out after {_MOTION_TIMEOUT_S}s "
+                    f"(ticks={self._get_ticks()}, target=0)"
+                )
             time.sleep(_POLL_S)
 
         self._set_esc(_ESC_STOP)
         time.sleep(0.15)
-        self._zero_ticks()
         log.info("GPIOGripper: open done (ticks=%d)", self._get_ticks())
 
     def close(self) -> None:
