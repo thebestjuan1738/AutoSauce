@@ -209,8 +209,8 @@ class GPIOGripper:
         start = time.time()
         
         self._set_esc(_ESC_CLOSE_FAST)
-        # Give motor a brief moment to start moving before we start checking for stalls
-        time.sleep(0.2)
+        # Give motor a solid moment to overcome inertia before tracking stalls
+        time.sleep(0.5)
         
         last_ticks = self._get_ticks()
         last_move_time = time.time()
@@ -221,7 +221,9 @@ class GPIOGripper:
                 last_ticks = current
                 last_move_time = time.time()
 
-            if (time.time() - last_move_time) * 1000 > _STALL_DETECT_MS:
+            # Use a higher stall detection threshold for closing (400ms) to avoid false 
+            # positives if the software PWM or OS scheduling stutters slightly
+            if (time.time() - last_move_time) * 1000 > 400:
                 self._set_esc(_ESC_STOP)
                 time.sleep(0.15)
                 log.info("GPIOGripper: close grabbed/stalled at %d ticks", self._get_ticks())
