@@ -145,6 +145,12 @@ class GPIOGripper:
         Phase 3: slow creep to determine mechanical closed limit.
         Phase 4: Return to open position.
         """
+        # Detect current position to handle different starting states
+        current_ticks = self._get_ticks()
+        log.info("GPIOGripper: homing — starting at ticks=%d", current_ticks)
+        
+        # We don't have accurate ticks yet since we just powered on, but if there's any residual
+        # we can nudge it. However, the best bet is to just pull it closed a TINY bit and then open.
         log.info("GPIOGripper: homing — pre-close nudge (clearing open stop)...")
         self._set_esc(_ESC_CLOSE_FAST)
         time.sleep(0.3)
@@ -196,11 +202,16 @@ class GPIOGripper:
             time.sleep(_POLL_S)
 
         log.info("GPIOGripper: homing — phase 3 (closing to find close limit)...")
-        self._set_esc(_ESC_CLOSE_FAST)
-        time.sleep(1.0) # wait to clear open boundary inertia
         
+        # Record the start time BEFORE moving so we don't inadvertently stall during a long sleep
         last_ticks = self._get_ticks()
         last_move_time = time.time()
+        
+        self._set_esc(_ESC_CLOSE_FAST)
+        
+        # Wait a very brief amount of time for it to begin moving (instead of 1.0s which was
+        # hiding the movement from the stall detector because it had already finished moving!)
+        time.sleep(0.2) 
         
         start = time.time()
         while True:
@@ -218,7 +229,7 @@ class GPIOGripper:
             
             if time.time() - start > 15.0:
                 self._set_esc(_ESC_STOP)
-                raise RuntimeError("GPIOGripper: timed out finding close limit")
+                raise RuntimeError(f"GPIOGripper: timed out finding close limit, ended at {self._get_ticks()} ticks")
             
             time.sleep(_POLL_S)
             
