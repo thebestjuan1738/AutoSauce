@@ -244,7 +244,7 @@ class GPIOGripper:
         # Bypassing the immediate target=0 check incase inertia takes a second to register
         time.sleep(1.0)
         
-        while self._get_ticks() < -2000:  # Minimum open distance
+        while self._get_ticks() < 2000:  # Minimum open distance
             if time.time() - start > _MOTION_TIMEOUT_S:
                 self._set_esc(_ESC_STOP)
                 raise RuntimeError(
