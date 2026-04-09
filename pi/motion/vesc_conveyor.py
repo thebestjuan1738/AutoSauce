@@ -26,7 +26,7 @@ VESC_CONVEYOR_BAUD = 115200
 
 # Map speed 0–100 → duty 0.0–MAX_DUTY.
 # Keep this conservative until you've verified mechanical limits.
-MAX_DUTY_CONVEYOR  = 0.30            # 30% duty cycle ceiling
+MAX_DUTY_CONVEYOR  = 0.3            # 30% duty cycle ceiling
 
 # VESC command IDs
 _COMM_GET_VALUES  = 4

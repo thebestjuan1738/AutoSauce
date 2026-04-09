@@ -11,9 +11,11 @@ Servo escExtruder;
 //
 const int grabberA = 18;   // INT5
 const int grabberB = 19;   // INT4
+const int SIGNAL_PIN_GRABBER = 2;  // Pin for sending signals to grabber ESC
 
 const int extruderA = 20;  // INT3
 const int extruderB = 21;  // INT2
+const int SIGNAL_PIN_EXTRUDER = 3; // Pin for sending signals to extr
 
 //
 // ====== ENCODER COUNTS ======
@@ -129,58 +131,59 @@ void setup() {
   attachInterrupt(digitalPinToInterrupt(extruderB), ISR_extruderB, CHANGE);
 
   // ESCs
-  escGrabber.attach(2);
-  escExtruder.attach(3);
+  escGrabber.attach(SIGNAL_PIN_GRABBER);  // Attach to any pin, we will use writeMicroseconds() with custom signals
+  escExtruder.attach(SIGNAL_PIN_EXTRUDER);
 
   escGrabber.writeMicroseconds(1500);
   escExtruder.writeMicroseconds(1500);
   delay(2000);
 
-  Serial.println("=== HOMING BOTH MOTORS ===");
+  Serial.println("=== ARDUINO READY ===");
+}
 
-  // Home grabber
-  Serial.println("Homing grabber...");
-  homeMotor(escGrabber, grabberTicks, 1700);
+//
+// ====== COMMAND PARSER ======
+//
+void processCommand(String cmd) {
+  cmd.trim();
+  if (cmd.length() == 0) return;
 
-  // Home extruder
-  Serial.println("Homing extruder...");
-  homeMotor(escExtruder, extruderTicks, 1700);
-
-  Serial.println("=== HOMING COMPLETE ===");
-
-  //
-  // 1. Close gripper 1.8 revolutions
-  //
-  long gripperTarget = -(long)(2 * TICKS_PER_REV);
-  Serial.print("Closing gripper to: ");
-  Serial.println(gripperTarget);
-  moveMotorTo(escGrabber, grabberTicks, gripperTarget);
-
-  //
-  // 2. Wait 3 seconds
-  //
-  Serial.println("Waiting 3 seconds...");
-  delay(3000);
-
-  //
-  // 3. Close extruder 10 revolutions
-  //
-  long extruderTarget = -(long)(10.0 * TICKS_PER_REV);
-  Serial.print("Closing extruder to: ");
-  Serial.println(extruderTarget);
-  moveMotorTo(escExtruder, extruderTicks, extruderTarget);
-
-  //
-  // 4. Stop forever
-  //
-  Serial.println("Sequence complete. Motors stopped.");
+  if (cmd == "HOME_GRIPPER") {
+    // 1700 is strong PWM for grabber
+    homeMotor(escGrabber, grabberTicks, 1700);
+    Serial.println("DONE");
+  } 
+  else if (cmd == "HOME_EXTRUDER") {
+    // 1300 might be appropriate for extruder based on Python, but setup originally used 1700.
+    // Changing to 1700 matching previous setup() homing, feel free to tune.
+    homeMotor(escExtruder, extruderTicks, 1700);
+    Serial.println("DONE");
+  }
+  else if (cmd.startsWith("MOVE_GRIPPER:")) {
+    long target = cmd.substring(13).toInt();
+    moveMotorTo(escGrabber, grabberTicks, target);
+    Serial.println("DONE");
+  }
+  else if (cmd.startsWith("MOVE_EXTRUDER:")) {
+    long target = cmd.substring(14).toInt();
+    moveMotorTo(escExtruder, extruderTicks, target);
+    Serial.println("DONE");
+  }
+  else if (cmd == "PING") {
+    Serial.println("PONG");
+  }
+  else {
+    Serial.println("ERR: Unknown Command");
+    Serial.println("DONE");
+  }
 }
 
 //
 // ====== LOOP ======
 //
 void loop() {
-  // Do nothing — sequence is complete
-  escGrabber.writeMicroseconds(1500);
-  escExtruder.writeMicroseconds(1500);
+  if (Serial.available() > 0) {
+    String cmd = Serial.readStringUntil('\n');
+    processCommand(cmd);
+  }
 }

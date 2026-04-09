@@ -31,6 +31,12 @@ USE_MOCK = True
 #   USE_VESC_CONVEYOR=1  → open /dev/ttyACM0 (requires --device flag in Docker)
 USE_VESC_CONVEYOR = os.environ.get("USE_VESC_CONVEYOR", "1") != "0"
 
+# True → use real GPIOGripper + GPIOExtruder (Arduino over USB) even when USE_MOCK is True.
+# Can be overridden via the USE_ARDUINO environment variable:
+#   USE_ARDUINO=0  → fall back to MockGripper/MockExtruder (no Arduino needed)
+#   USE_ARDUINO=1  → open /dev/ttyACM0 or /dev/ttyUSB0 (requires --device flag in Docker)
+USE_ARDUINO = os.environ.get("USE_ARDUINO", "1") != "0"
+
 
 def build_order_manager() -> OrderManager:
     if USE_MOCK and not USE_VESC_CONVEYOR:
@@ -59,12 +65,33 @@ def build_order_manager() -> OrderManager:
         )
         conveyor = MockConveyor()
 
+    # Build gripper + extruder — real Arduino or mock.
+    if USE_ARDUINO or not USE_MOCK:
+        from pi.motion.gripper  import GPIOGripper
+        from pi.motion.extruder import GPIOExtruder
+        try:
+            gripper  = GPIOGripper()
+            extruder = GPIOExtruder()
+        except Exception as exc:
+            if not USE_MOCK:
+                raise
+            log.warning(
+                f"Arduino unavailable ({exc}). "
+                "Falling back to MockGripper/MockExtruder. "
+                "Set USE_ARDUINO=0 to silence this warning."
+            )
+            gripper  = MockGripper()
+            extruder = MockExtruder()
+    else:
+        gripper  = MockGripper()
+        extruder = MockExtruder()
+
     if USE_MOCK:
-        # Hardware-in-the-loop: real VESC conveyor, everything else mocked.
+        # Hardware-in-the-loop: real VESC conveyor + optional real Arduino, gantry still mocked.
         return OrderManager(
             gantry=MockGantry(),
-            gripper=MockGripper(),
-            extruder=MockExtruder(),
+            gripper=gripper,
+            extruder=extruder,
             conveyor=conveyor,
         )
 
