@@ -5,12 +5,15 @@ Gantry driver for the SauceBot — NEO rev brushless motor controlled by a VESC 
 Implements the move_to(position_mm) interface expected by OrderManager.
 
 Speaks the VESC serial protocol directly — no pyvesc dependency.
+Uses tachometer_abs from COMM_GET_VALUES for closed-loop position control.
 
 USB port auto-selects by OS:
     Windows → COM4
     Linux   → /dev/ttyACM0
 
-Tune MAX_DUTY_GANTRY and MM_PER_SECOND once you've done a free-run calibration.
+Tune MAX_DUTY_GANTRY and TICKS_PER_MM once you've done a free-run calibration:
+  1. Run start(TRAVEL_SPEED) for a known distance (e.g. 100 mm).
+  2. Read tachometer_abs before and after — the difference divided by 100 is TICKS_PER_MM.
 """
 
 import struct
@@ -32,9 +35,15 @@ MAX_DUTY_GANTRY  = 0.3            # 30% duty cycle ceiling
 # Speed used for move_to() calls (0–100 abstract units).
 TRAVEL_SPEED = 50
 
-# TODO: calibrate by measuring mm/s at TRAVEL_SPEED after motor detection.
-# Run start(TRAVEL_SPEED) for 1 s, measure belt travel, set MM_PER_SECOND accordingly.
-MM_PER_SECOND = 100.0             # mm/s at TRAVEL_SPEED — needs calibration
+# TODO: calibrate — see module docstring.
+# encoder PPR × pole pairs × (motor pulley teeth / belt pulley teeth)
+TICKS_PER_MM = 100                # encoder ticks per mm of belt travel — needs calibration
+
+# How close (in ticks) counts as "arrived".
+POSITION_TOLERANCE_TICKS = 50
+
+# Raise TimeoutError if the gantry doesn't reach the target within this many seconds.
+TRAVEL_TIMEOUT_S = 30
 
 # VESC command IDs
 _COMM_GET_VALUES  = 4
@@ -162,7 +171,7 @@ def _parse_get_values(payload: bytes) -> dict:
         raw_duty, raw_rpm,
         raw_vin,
         _ah, _ahc, _wh, _whc,
-        _tach, _tach_abs,
+        _tach, tach_abs,
         fault,
     ) = struct.unpack_from('>hhiiiihihiiiiiiB', data)
 
@@ -174,6 +183,7 @@ def _parse_get_values(payload: bytes) -> dict:
         "duty_cycle":      raw_duty       / 1000.0,
         "rpm":             raw_rpm,
         "v_in":            raw_vin        / 10.0,
+        "tachometer_abs":  tach_abs,
         "fault_code":      fault,
         "fault_name":      _FAULT_NAMES.get(fault, f"UNKNOWN({fault})"),
     }
@@ -236,32 +246,60 @@ class VESCGantry:
 
         log.info("VESCGantry: boot check passed ✓")
 
+    def _get_encoder_position(self) -> int:
+        """Request telemetry and return the absolute tachometer tick count."""
+        self._ser.reset_input_buffer()
+        self._ser.write(_packet_get_values())
+        payload = _read_packet(self._ser)
+        return _parse_get_values(payload)["tachometer_abs"]
+
     def move_to(self, position_mm: int) -> None:
         """
-        Open-loop move to position_mm (from the dock end of the rail).
-        Runs at TRAVEL_SPEED in the correct direction for a time computed from MM_PER_SECOND.
+        Closed-loop move to position_mm (from the dock end of the rail).
+        Drives at TRAVEL_SPEED and polls tachometer_abs at 20 Hz until the
+        target tick count is reached within POSITION_TOLERANCE_TICKS.
 
-        Calibrate MM_PER_SECOND at the top of this file to match your belt/pulley ratio.
+        Calibrate TICKS_PER_MM at the top of this file — see module docstring.
         """
         if position_mm == self._position_mm:
             return
 
-        delta_mm   = position_mm - self._position_mm
-        duration_s = abs(delta_mm) / MM_PER_SECOND
+        delta_mm    = position_mm - self._position_mm
+        delta_ticks = int(abs(delta_mm) * TICKS_PER_MM)
+        direction   = 1 if delta_mm > 0 else -1
+
+        start_ticks  = self._get_encoder_position()
+        target_ticks = start_ticks + direction * delta_ticks
 
         log.info(
-            "VESCGantry: move_to %dmm  (from %dmm, Δ%+dmm, %.2fs)",
-            position_mm, self._position_mm, delta_mm, duration_s,
+            "VESCGantry: move_to %dmm  (from %dmm, Δ%+d ticks, target=%d)",
+            position_mm, self._position_mm, direction * delta_ticks, target_ticks,
         )
 
-        if delta_mm > 0:
+        if direction > 0:
             self.start(TRAVEL_SPEED)
         else:
             self.reverse(TRAVEL_SPEED)
 
-        time.sleep(duration_s)
-        self.stop()
+        deadline = time.monotonic() + TRAVEL_TIMEOUT_S
+        while True:
+            current_ticks   = self._get_encoder_position()
+            ticks_remaining = abs(target_ticks - current_ticks)
 
+            if ticks_remaining <= POSITION_TOLERANCE_TICKS:
+                break
+
+            if time.monotonic() > deadline:
+                self.stop()
+                raise TimeoutError(
+                    f"VESCGantry timed out after {TRAVEL_TIMEOUT_S}s "
+                    f"moving to {position_mm}mm "
+                    f"(~{ticks_remaining} ticks remaining)"
+                )
+
+            time.sleep(0.05)  # poll at 20 Hz
+
+        self.stop()
         self._position_mm = position_mm
         log.info("VESCGantry: arrived at %dmm", position_mm)
 
