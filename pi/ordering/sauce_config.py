@@ -15,13 +15,13 @@ Scaling to multiple sauces later:
 # ─── Rail positions (mm from the dock end of the rail) ────────────────────────
 # Tune these once you have the physical rail assembled.
 #
-#   DOCK end ─────────────── HOME ──────────── DISPENSE end
-#   0mm                     ~175mm             ~350mm
+#   HOME end ──────────── DISPENSE ──────────── DOCK end
+#   0mm                  ~180mm                ~375mm
 #
 POSITIONS = {
-    "dock":     0,      # where the sauce dispenser sits when not in use
-    "home":     175,    # resting position between orders (middle of rail)
-    "dispense": 350,    # over the conveyor belt / sandwich
+    "dock":     375,    # where the sauce dispenser sits when not in use
+    "home":     0,      # resting position between orders (home end of rail)
+    "dispense": 180,    # over the conveyor belt / sandwich
 }
 
 # ─── Gripper (encoder-based, no timing config needed) ────────────────────────

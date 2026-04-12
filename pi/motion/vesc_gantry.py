@@ -304,12 +304,11 @@ class VESCGantry:
         delta_ticks = int(abs(delta_mm) * TICKS_PER_MM)
         direction   = 1 if delta_mm > 0 else -1
 
-        start_ticks  = self._get_encoder_position()
-        target_ticks = start_ticks + direction * delta_ticks
+        start_ticks = self._get_encoder_position()
 
         log.info(
-            "VESCGantry: move_to %dmm  (from %dmm, Δ%+d ticks, target=%d)",
-            position_mm, self._position_mm, direction * delta_ticks, target_ticks,
+            "VESCGantry: move_to %dmm  (from %dmm, Δ%+d ticks needed)",
+            position_mm, self._position_mm, direction * delta_ticks,
         )
 
         if direction > 0:
@@ -319,18 +318,22 @@ class VESCGantry:
 
         deadline = time.monotonic() + TRAVEL_TIMEOUT_S
         while True:
-            current_ticks   = self._get_encoder_position()
-            ticks_remaining = abs(target_ticks - current_ticks)
+            # tachometer_abs always increases — measure distance travelled from start
+            ticks_travelled = abs(self._get_encoder_position() - start_ticks)
+            ticks_remaining = delta_ticks - ticks_travelled
 
             if ticks_remaining <= POSITION_TOLERANCE_TICKS:
                 break
 
             if time.monotonic() > deadline:
                 self.stop()
+                # Best-effort: update position based on how far we actually got
+                actual_mm = int(ticks_travelled / TICKS_PER_MM)
+                self._position_mm += direction * actual_mm
                 raise TimeoutError(
                     f"VESCGantry timed out after {TRAVEL_TIMEOUT_S}s "
                     f"moving to {position_mm}mm "
-                    f"(~{ticks_remaining} ticks remaining)"
+                    f"(~{int(ticks_remaining / TICKS_PER_MM)}mm remaining)"
                 )
 
             time.sleep(0.05)  # poll at 20 Hz
