@@ -35,9 +35,13 @@ class MockGripper:
 
     def close(self) -> None:
         log.info("  [MOCK] Gripper: closing")
+        time.sleep(2.0)
+        log.info("  [MOCK] Gripper: closed")
 
     def open(self) -> None:
         log.info("  [MOCK] Gripper: opening")
+        time.sleep(2.0)
+        log.info("  [MOCK] Gripper: open")
 
 
 class MockExtruder:
@@ -46,9 +50,13 @@ class MockExtruder:
 
     def dispense(self) -> None:
         log.info("  [MOCK] Extruder: dispensing")
+        time.sleep(3.0)
+        log.info("  [MOCK] Extruder: dispense complete")
 
     def retract(self) -> None:
         log.info("  [MOCK] Extruder: retracting")
+        time.sleep(2.0)
+        log.info("  [MOCK] Extruder: retracted")
 
 
 class MockConveyor:
