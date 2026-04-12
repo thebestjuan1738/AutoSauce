@@ -32,7 +32,8 @@ VESC_GANTRY_BAUD = 115200
 
 # Map speed 0–100 → duty 0.0–MAX_DUTY.
 MAX_DUTY_GANTRY  = 0.5           # 50% duty ceiling — raise only after verifying mechanics
-
+# Minimum duty applied even at low speeds — needed to overcome sticky/noisy sections.
+MIN_DUTY_GANTRY  = 0.5            # never go below this when the motor is running
 # Speed used for move_to() calls (0–100 abstract units).
 # 80 × 0.5 = 0.40 effective duty — enough torque to drive a loaded gantry.
 TRAVEL_SPEED = 80
@@ -344,12 +345,14 @@ class VESCGantry:
         speed: 0–100 abstract unit.
         """
         duty = (max(0, min(100, speed)) / 100.0) * MAX_DUTY_GANTRY
+        duty = max(duty, MIN_DUTY_GANTRY)
         log.info("VESCGantry: forward  speed=%d → duty=%.3f", speed, -duty)
         self._ser.write(_packet_set_duty(-duty))
 
     def reverse(self, speed: int) -> None:
         """Drive the gantry backward (toward dock)."""
         duty = (max(0, min(100, speed)) / 100.0) * MAX_DUTY_GANTRY
+        duty = max(duty, MIN_DUTY_GANTRY)
         log.info("VESCGantry: reverse  speed=%d → duty=%.3f", speed, duty)
         self._ser.write(_packet_set_duty(duty))
 
