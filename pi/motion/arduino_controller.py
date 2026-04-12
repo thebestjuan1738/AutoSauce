@@ -17,7 +17,7 @@ class ArduinoController:
             return cls._instance
 
     _BOOT_TIMEOUT = 10.0   # seconds to wait for READY banner
-    _LINUX_PORTS  = ['/dev/ttyACM0', '/dev/ttyUSB0']
+    _LINUX_PORTS  = ['/dev/ttyACM1', '/dev/ttyUSB0']
 
     @staticmethod
     def _candidate_ports() -> list:
