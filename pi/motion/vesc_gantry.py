@@ -31,10 +31,10 @@ VESC_GANTRY_PORT = "COM4"          if sys.platform == "win32" else "/dev/ttyACM0
 VESC_GANTRY_BAUD = 115200
 
 # Map speed 0–100 → duty 0.0–MAX_DUTY.
-MAX_DUTY_GANTRY  = 0.6            # 60% duty ceiling — raise only after verifying mechanics
+MAX_DUTY_GANTRY  = 0.3           # 30% duty ceiling — raise only after verifying mechanics
 
 # Speed used for move_to() calls (0–100 abstract units).
-# 80 × 0.6 = 0.48 effective duty — enough torque to drive a loaded gantry.
+# 80 × 0.3 = 0.24 effective duty — enough torque to drive a loaded gantry.
 TRAVEL_SPEED = 80
 
 # TODO: calibrate — call gantry.calibrate() then set this from the result.
