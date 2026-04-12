@@ -22,7 +22,7 @@ sys.path.insert(0, ".")
 
 from pi.motion.vesc_gantry import VESCGantry, TRAVEL_SPEED, MAX_DUTY_GANTRY
 
-CALIBRATION_DURATION_S = 5.0   # how long to run the motor during each test run
+CALIBRATION_DURATION_S = 2.0   # how long to run the motor during each test run
 
 
 def _run_timed(gantry: VESCGantry, duration_s: float) -> int:
