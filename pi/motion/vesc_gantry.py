@@ -30,17 +30,17 @@ VESC_GANTRY_BAUD = 115200
 
 # Map speed 0–100 → duty 0.0–MAX_DUTY.
 # Keep this conservative until you've verified mechanical limits.
-MAX_DUTY_GANTRY  = 0.3            # 30% duty cycle ceiling
+MAX_DUTY_GANTRY  = 0.5            # 30% duty cycle ceiling
 
 # Speed used for move_to() calls (0–100 abstract units).
 TRAVEL_SPEED = 50
 
 # TODO: calibrate — see module docstring.
 # encoder PPR × pole pairs × (motor pulley teeth / belt pulley teeth)
-TICKS_PER_MM = 50                # encoder ticks per mm of belt travel — needs calibration
+TICKS_PER_MM = 1                # encoder ticks per mm of belt travel — needs calibration
 
 # How close (in ticks) counts as "arrived".
-POSITION_TOLERANCE_TICKS = 50
+POSITION_TOLERANCE_TICKS = 3
 
 # Raise TimeoutError if the gantry doesn't reach the target within this many seconds.
 TRAVEL_TIMEOUT_S = 30
