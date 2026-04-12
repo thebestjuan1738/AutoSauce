@@ -37,8 +37,8 @@ MAX_DUTY_GANTRY  = 0.7           # 70% duty ceiling — raise only after verifyi
 # Minimum duty applied even at low speeds — needed to overcome sticky/noisy sections.
 MIN_DUTY_GANTRY  = 0.5            # never go below this when the motor is running
 # Speed used for move_to() calls (0–100 abstract units).
-# 80 × 0.5 = 0.40 effective duty — enough torque to drive a loaded gantry.
-TRAVEL_SPEED = 80
+# 100 × 0.7 = 0.70 effective duty — full ceiling, needed to overcome mechanical stalls.
+TRAVEL_SPEED = 100
 
 # Calibrated: average of runs 2–3 from calibrate_gantry.py (3.56, 3.78 ticks/mm).
 TICKS_PER_MM = 3.67               # encoder ticks per mm of belt travel
