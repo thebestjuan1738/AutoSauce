@@ -1,32 +1,40 @@
 """
-vesc_conveyor.py (LEGACY)
+vesc_gantry.py
 
-Conveyor driver for a NEO rev brushless motor controlled by a VESC over USB serial.
-Implements the same start(speed) / stop() interface as MockConveyor.
+Gantry driver for the SauceBot — NEO rev brushless motor controlled by a VESC over USB serial.
+Implements the move_to(position_mm) interface expected by OrderManager.
 
 Speaks the VESC serial protocol directly — no pyvesc dependency.
 
 USB port auto-selects by OS:
-    Windows → COM3
+    Windows → COM4
     Linux   → /dev/ttyACM0
 
-Tune MAX_DUTY_CONVEYOR once you've done a free-spin run — start low.
+Tune MAX_DUTY_GANTRY and MM_PER_SECOND once you've done a free-run calibration.
 """
 
 import struct
 import sys
+import time
 import serial
 
 from pi.utils.logger import log
 
 # ─── Config ───────────────────────────────────────────────────────────────────
 
-VESC_CONVEYOR_PORT = "COM4"          if sys.platform == "win32" else "/dev/ttyACM0"
-VESC_CONVEYOR_BAUD = 115200
+VESC_GANTRY_PORT = "COM4"          if sys.platform == "win32" else "/dev/ttyACM0"
+VESC_GANTRY_BAUD = 115200
 
 # Map speed 0–100 → duty 0.0–MAX_DUTY.
 # Keep this conservative until you've verified mechanical limits.
-MAX_DUTY_CONVEYOR  = 0.3            # 30% duty cycle ceiling
+MAX_DUTY_GANTRY  = 0.3            # 30% duty cycle ceiling
+
+# Speed used for move_to() calls (0–100 abstract units).
+TRAVEL_SPEED = 50
+
+# TODO: calibrate by measuring mm/s at TRAVEL_SPEED after motor detection.
+# Run start(TRAVEL_SPEED) for 1 s, measure belt travel, set MM_PER_SECOND accordingly.
+MM_PER_SECOND = 100.0             # mm/s at TRAVEL_SPEED — needs calibration
 
 # VESC command IDs
 _COMM_GET_VALUES  = 4
@@ -173,16 +181,21 @@ def _parse_get_values(payload: bytes) -> dict:
 
 # ─── Driver ───────────────────────────────────────────────────────────────────
 
-class VESCConveyor:
+class VESCGantry:
     """
-    Controls the NEO rev sandwich-belt motor via VESC over USB.
+    Controls the NEO rev gantry belt motor via VESC over USB.
     Opened once at construction; connection is reused for the lifetime of the process.
+
+    move_to() is the primary interface used by OrderManager.
+    start() / reverse() / stop() are available for manual jog or calibration.
     """
 
     def __init__(self):
-        log.info("VESCConveyor: connecting to %s @ %d baud", VESC_CONVEYOR_PORT, VESC_CONVEYOR_BAUD)
-        self._ser = serial.Serial(VESC_CONVEYOR_PORT, VESC_CONVEYOR_BAUD, timeout=1)
-        log.info("VESCConveyor: connected")
+        log.info("VESCGantry: connecting to %s @ %d baud", VESC_GANTRY_PORT, VESC_GANTRY_BAUD)
+        self._ser = serial.Serial(VESC_GANTRY_PORT, VESC_GANTRY_BAUD, timeout=1)
+        # Assumes the gantry is physically at the dock (0 mm) when the program starts.
+        self._position_mm = 0
+        log.info("VESCGantry: connected")
 
     def boot_check(self) -> None:
         """
@@ -190,7 +203,7 @@ class VESCConveyor:
         Raises RuntimeError with a clear message if any check fails.
         Called once at startup before accepting orders.
         """
-        log.info("VESCConveyor: running boot check...")
+        log.info("VESCGantry: running boot check...")
         self._ser.reset_input_buffer()
         self._ser.write(_packet_get_values())
 
@@ -198,7 +211,7 @@ class VESCConveyor:
         v = _parse_get_values(payload)
 
         log.info(
-            "VESCConveyor: telemetry — VIN=%.1fV  FET=%.1f°C  MOT=%.1f°C  "
+            "VESCGantry: telemetry — VIN=%.1fV  FET=%.1f°C  MOT=%.1f°C  "
             "RPM=%d  duty=%.3f  fault=%s",
             v["v_in"], v["temp_fet_c"], v["temp_motor_c"],
             v["rpm"], v["duty_cycle"], v["fault_name"],
@@ -219,26 +232,55 @@ class VESCConveyor:
             errors.append(f"motor already spinning at boot: {v['rpm']} RPM")
 
         if errors:
-            raise RuntimeError("VESCConveyor boot check FAILED:\n  " + "\n  ".join(errors))
+            raise RuntimeError("VESCGantry boot check FAILED:\n  " + "\n  ".join(errors))
 
-        log.info("VESCConveyor: boot check passed ✓")
+        log.info("VESCGantry: boot check passed ✓")
+
+    def move_to(self, position_mm: int) -> None:
+        """
+        Open-loop move to position_mm (from the dock end of the rail).
+        Runs at TRAVEL_SPEED in the correct direction for a time computed from MM_PER_SECOND.
+
+        Calibrate MM_PER_SECOND at the top of this file to match your belt/pulley ratio.
+        """
+        if position_mm == self._position_mm:
+            return
+
+        delta_mm   = position_mm - self._position_mm
+        duration_s = abs(delta_mm) / MM_PER_SECOND
+
+        log.info(
+            "VESCGantry: move_to %dmm  (from %dmm, Δ%+dmm, %.2fs)",
+            position_mm, self._position_mm, delta_mm, duration_s,
+        )
+
+        if delta_mm > 0:
+            self.start(TRAVEL_SPEED)
+        else:
+            self.reverse(TRAVEL_SPEED)
+
+        time.sleep(duration_s)
+        self.stop()
+
+        self._position_mm = position_mm
+        log.info("VESCGantry: arrived at %dmm", position_mm)
 
     def start(self, speed: int) -> None:
         """
-        Start the conveyor forward.
-        speed: 0–100 abstract unit (matches sauce_config conveyor_speed).
+        Drive the gantry forward (away from dock).
+        speed: 0–100 abstract unit.
         """
-        duty = (max(0, min(100, speed)) / 100.0) * MAX_DUTY_CONVEYOR
-        log.info("VESCConveyor: forward  speed=%d → duty=%.3f", speed, duty)
+        duty = (max(0, min(100, speed)) / 100.0) * MAX_DUTY_GANTRY
+        log.info("VESCGantry: forward  speed=%d → duty=%.3f", speed, duty)
         self._ser.write(_packet_set_duty(duty))
 
     def reverse(self, speed: int) -> None:
-        """Run the conveyor in reverse at the same speed mapping."""
-        duty = (max(0, min(100, speed)) / 100.0) * MAX_DUTY_CONVEYOR
-        log.info("VESCConveyor: reverse  speed=%d → duty=%.3f", speed, duty)
+        """Drive the gantry backward (toward dock)."""
+        duty = (max(0, min(100, speed)) / 100.0) * MAX_DUTY_GANTRY
+        log.info("VESCGantry: reverse  speed=%d → duty=%.3f", speed, duty)
         self._ser.write(_packet_set_duty(-duty))
 
     def stop(self) -> None:
-        """Release motor current — belt coasts to a stop."""
-        log.info("VESCConveyor: stop")
+        """Release motor current — gantry coasts to a stop."""
+        log.info("VESCGantry: stop")
         self._ser.write(_packet_set_current(0.0))

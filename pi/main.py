@@ -24,12 +24,12 @@ from pi.utils.logger import log
 # False → real GPIO drivers (Pi only, hardware must be wired and VESC configured)
 USE_MOCK = True
 
-# True → use real VESCConveyor (NEO rev via USB VESC) even when USE_MOCK is True.
-# Everything else stays mocked — lets you test the sandwich motor in isolation.
-# Can also be overridden via the USE_VESC_CONVEYOR environment variable:
-#   USE_VESC_CONVEYOR=0  → fall back to MockConveyor (no serial port needed)
-#   USE_VESC_CONVEYOR=1  → open /dev/ttyACM0 (requires --device flag in Docker)
-USE_VESC_CONVEYOR = os.environ.get("USE_VESC_CONVEYOR", "1") != "0"
+# True → use real VESCGantry (NEO rev via USB VESC) even when USE_MOCK is True.
+# Everything else stays mocked — lets you test the gantry motor in isolation.
+# Can also be overridden via the USE_VESC_GANTRY environment variable:
+#   USE_VESC_GANTRY=0  → fall back to MockGantry (no serial port needed)
+#   USE_VESC_GANTRY=1  → open /dev/ttyACM0 (requires --device flag in Docker)
+USE_VESC_GANTRY = os.environ.get("USE_VESC_GANTRY", "1") != "0"
 
 # True → use real GPIOGripper + GPIOExtruder (Arduino over USB) even when USE_MOCK is True.
 # Can be overridden via the USE_ARDUINO environment variable:
@@ -39,7 +39,7 @@ USE_ARDUINO = os.environ.get("USE_ARDUINO", "1") != "0"
 
 
 def build_order_manager() -> OrderManager:
-    if USE_MOCK and not USE_VESC_CONVEYOR:
+    if USE_MOCK and not USE_VESC_GANTRY:
         return OrderManager(
             gantry=MockGantry(),
             gripper=MockGripper(),
@@ -47,23 +47,23 @@ def build_order_manager() -> OrderManager:
             conveyor=MockConveyor(),
         )
 
-    # Lazy import so pyvesc is only loaded when actually needed.
+    # Lazy import so the serial port is only opened when actually needed.
     import serial.serialutil
-    from pi.motion.vesc_conveyor import VESCConveyor
+    from pi.motion.vesc_gantry import VESCGantry
     try:
-        conveyor = VESCConveyor()
-        conveyor.boot_check()
+        vesc_gantry = VESCGantry()
+        vesc_gantry.boot_check()
     except serial.serialutil.SerialException as exc:
         if not USE_MOCK:
             # Real-driver mode: a missing VESC is fatal.
             raise
         log.warning(
-            f"VESCConveyor unavailable ({exc}). "
-            "Falling back to MockConveyor. "
+            f"VESCGantry unavailable ({exc}). "
+            "Falling back to MockGantry. "
             "Pass --device /dev/ttyACM0:/dev/ttyACM0 to docker run "
-            "or set USE_VESC_CONVEYOR=0 to silence this warning."
+            "or set USE_VESC_GANTRY=0 to silence this warning."
         )
-        conveyor = MockConveyor()
+        vesc_gantry = MockGantry()
 
     # Build gripper + extruder — real Arduino or mock.
     if USE_ARDUINO or not USE_MOCK:
@@ -87,21 +87,20 @@ def build_order_manager() -> OrderManager:
         extruder = MockExtruder()
 
     if USE_MOCK:
-        # Hardware-in-the-loop: real VESC conveyor + optional real Arduino, gantry still mocked.
+        # Hardware-in-the-loop: real VESC gantry + optional real Arduino, conveyor still mocked.
         return OrderManager(
-            gantry=MockGantry(),
+            gantry=vesc_gantry,
             gripper=gripper,
             extruder=extruder,
-            conveyor=conveyor,
+            conveyor=MockConveyor(),
         )
 
     # Full real drivers (Pi only).
-    from pi.motion.gantry   import GPIOGantry
     from pi.motion.extruder import GPIOExtruder
     from pi.motion.gripper  import GPIOGripper
     from pi.motion.conveyor import GPIOConveyor
     return OrderManager(
-        gantry=GPIOGantry(),
+        gantry=vesc_gantry,
         gripper=GPIOGripper(),
         extruder=GPIOExtruder(),
         conveyor=GPIOConveyor(),

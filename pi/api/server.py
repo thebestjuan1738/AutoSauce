@@ -62,7 +62,7 @@ _ser: serial.Serial | None = None
 
 @app.on_event("startup")
 def _open_serial() -> None:
-    # Arduino replaced by VESC — serial port owned by VESCConveyor. Skip.
+    # Gantry controlled by VESCGantry via USB serial — serial port owned by that driver. Skip.
     pass
 
 
