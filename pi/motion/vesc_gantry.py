@@ -12,8 +12,10 @@ USB port auto-selects by OS:
     Linux   → /dev/ttyACM0
 
 Tune MAX_DUTY_GANTRY and TICKS_PER_MM once you've done a free-run calibration:
-  1. Run start(TRAVEL_SPEED) for a known distance (e.g. 100 mm).
-  2. Read tachometer_abs before and after — the difference divided by 100 is TICKS_PER_MM.
+  1. Position gantry at one end with 300+ mm of clear travel.
+  2. Call gantry.calibrate() — it runs for 5 s and reports the tick delta.
+  3. Measure the actual distance the carriage moved in mm.
+  4. Set TICKS_PER_MM = reported_ticks / actual_mm.
 """
 
 import struct
@@ -29,17 +31,19 @@ VESC_GANTRY_PORT = "COM4"          if sys.platform == "win32" else "/dev/ttyACM0
 VESC_GANTRY_BAUD = 115200
 
 # Map speed 0–100 → duty 0.0–MAX_DUTY.
-# Keep this conservative until you've verified mechanical limits.
-MAX_DUTY_GANTRY  = 0.3            # 30% duty cycle ceiling
+MAX_DUTY_GANTRY  = 0.5            # 50% duty ceiling — raise only after verifying mechanics
 
 # Speed used for move_to() calls (0–100 abstract units).
-TRAVEL_SPEED = 50
+# 80 × 0.5 = 0.40 effective duty — enough torque to drive a loaded gantry.
+TRAVEL_SPEED = 80
 
-# TODO: calibrate — see module docstring.
-# encoder PPR × pole pairs × (motor pulley teeth / belt pulley teeth)
-TICKS_PER_MM = 200                # encoder ticks per mm of belt travel — needs calibration
+# TODO: calibrate — call gantry.calibrate() then set this from the result.
+# Set conservatively LOW so the gantry undershoots (stops short) rather than
+# overshoots and crashes into the end-stop.
+TICKS_PER_MM = 1                  # encoder ticks per mm — needs calibration
 
 # How close (in ticks) counts as "arrived".
+# At TICKS_PER_MM=1 this is ±3 mm; scale proportionally after calibration.
 POSITION_TOLERANCE_TICKS = 3
 
 # Raise TimeoutError if the gantry doesn't reach the target within this many seconds.
@@ -252,6 +256,37 @@ class VESCGantry:
         self._ser.write(_packet_get_values())
         payload = _read_packet(self._ser)
         return _parse_get_values(payload)["tachometer_abs"]
+
+    def calibrate(self, duration_s: float = 5.0) -> None:
+        """
+        Calibration utility — measures TICKS_PER_MM for your belt/pulley.
+
+        Usage (run once from a Python shell or a throw-away script):
+            from pi.motion.vesc_gantry import VESCGantry
+            g = VESCGantry()
+            g.boot_check()
+            g.calibrate(duration_s=5)
+            # then measure how far the carriage physically moved and set:
+            # TICKS_PER_MM = printed_ticks / actual_mm
+            # POSITION_TOLERANCE_TICKS = round(TICKS_PER_MM * 2)  # ±2 mm
+
+        Ensure at least 300 mm of clear travel before calling.
+        """
+        log.info("VESCGantry calibrate: running %.1fs at speed=%d...", duration_s, TRAVEL_SPEED)
+        t_start = self._get_encoder_position()
+        self.start(TRAVEL_SPEED)
+        time.sleep(duration_s)
+        self.stop()
+        t_end = self._get_encoder_position()
+        delta = abs(t_end - t_start)
+        log.info(
+            "VESCGantry calibrate: %d ticks in %.1fs",
+            delta, duration_s,
+        )
+        print(f"\nCalibration result: {delta} ticks in {duration_s}s")
+        print(f"Measure how far the carriage moved, then set:")
+        print(f"    TICKS_PER_MM = {delta} / <actual_mm_travelled>")
+        print(f"    POSITION_TOLERANCE_TICKS = round(TICKS_PER_MM * 2)  # ±2 mm")
 
     def move_to(self, position_mm: int) -> None:
         """
