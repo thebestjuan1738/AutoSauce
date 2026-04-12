@@ -8,10 +8,16 @@ Usage:
     python calibrate_gantry.py
 
 Each iteration:
-    1. Drives the gantry forward for 5 seconds at TRAVEL_SPEED.
-    2. Returns it to the start position using the current best estimate.
-    3. You measure the distance travelled and enter it.
-    4. Results are shown. Repeat until readings are consistent, then confirm.
+    1. Drives the gantry toward CALIBRATION_TARGET_MM using the current best
+       TICKS_PER_MM estimate, stopping when that tick count is reached.
+    2. You measure the actual distance the carriage moved with a ruler.
+    3. TICKS_PER_MM is recalculated from tick_delta / actual_mm.
+    4. The carriage is returned to start using the raw tick count.
+    5. Repeat until readings are consistent, then confirm.
+
+The first run uses TICKS_PER_MM=1 so the target will be reached very quickly —
+the first measurement recalibrates it, and subsequent runs become increasingly
+accurate.
 """
 
 import sys
@@ -20,23 +26,51 @@ import time
 # Allow running from the repo root without installing the package.
 sys.path.insert(0, ".")
 
-from pi.motion.vesc_gantry import VESCGantry, TRAVEL_SPEED, MAX_DUTY_GANTRY
+from pi.motion.vesc_gantry import VESCGantry, TRAVEL_SPEED, MAX_DUTY_GANTRY, TICKS_PER_MM as _DEFAULT_TPM
 
-CALIBRATION_DURATION_S = 2.0   # how long to run the motor during each test run
+# Target distance to travel each run. Set this to just under your rail length.
+CALIBRATION_TARGET_MM = 350      # mm — adjust to suit your rail
+
+# Safety: stop the motor if the target ticks haven't been reached in this long.
+CALIBRATION_TIMEOUT_S = 15
 
 
-def _run_timed(gantry: VESCGantry, duration_s: float) -> int:
-    """Drive forward for duration_s, return tick delta."""
+def _run_to_target(gantry: VESCGantry, target_mm: float, ticks_per_mm: float) -> tuple:
+    """
+    Drive forward until tick_delta reaches target_mm * ticks_per_mm, then stop.
+    Returns (tick_delta, ticks_before, ticks_after).
+    A safety timeout stops the motor if the target is never reached.
+    """
+    target_ticks = int(target_mm * ticks_per_mm)
     t_before = gantry._get_encoder_position()
+
+    print(f"  Target: {target_mm:.0f} mm  →  {target_ticks} ticks "
+          f"(at current TICKS_PER_MM={ticks_per_mm:.2f})", flush=True)
+    print("  Driving...", flush=True)
+
     gantry.start(TRAVEL_SPEED)
-    for remaining in range(int(duration_s), 0, -1):
-        print(f"  {remaining}s remaining...", end="\r", flush=True)
-        time.sleep(1.0)
+    deadline = time.monotonic() + CALIBRATION_TIMEOUT_S
+
+    while True:
+        t_current = gantry._get_encoder_position()
+        delta_so_far = abs(t_current - t_before)
+
+        if delta_so_far >= target_ticks:
+            break
+
+        if time.monotonic() > deadline:
+            print(f"  Safety timeout after {CALIBRATION_TIMEOUT_S}s "
+                  f"({delta_so_far}/{target_ticks} ticks).", flush=True)
+            break
+
+        time.sleep(0.05)  # poll at 20 Hz
+
     gantry.stop()
-    print("  Motor stopped.              ", flush=True)
     time.sleep(0.3)   # let carriage coast to rest
     t_after = gantry._get_encoder_position()
-    return abs(t_after - t_before), t_before, t_after
+    tick_delta = abs(t_after - t_before)
+    print(f"  Motor stopped.  Actual tick delta: {tick_delta}", flush=True)
+    return tick_delta, t_before, t_after
 
 
 def _return_to_start(gantry: VESCGantry, tick_delta: int) -> None:
@@ -85,12 +119,13 @@ def main():
     print("  VESCGantry Calibration Tool")
     print("=" * 60)
     print()
-    print(f"Each run drives the gantry forward for {CALIBRATION_DURATION_S:.0f}s,")
-    print("then returns it to the start. Repeat until results are consistent.")
+    print(f"Each run drives the gantry toward {CALIBRATION_TARGET_MM} mm")
+    print("using the current best TICKS_PER_MM estimate, then stops.")
+    print("You measure actual travel and the estimate self-corrects each run.")
     print()
     print("BEFORE CONTINUING:")
-    print("  - Carriage must be near the DOCK end of the rail.")
-    print("  - At least 300 mm of clear travel required.")
+    print(f"  - Carriage must be at the DOCK end of the rail.")
+    print(f"  - At least {CALIBRATION_TARGET_MM} mm of clear travel required.")
     print("  - Keep hands clear of the mechanism.")
     print()
     input("Press Enter when ready, or Ctrl-C to abort...")
@@ -113,20 +148,19 @@ def main():
     print()
 
     # ── Calibration loop ──────────────────────────────────────────────────────
-    run_number   = 0
-    all_results  = []          # list of (tick_delta, actual_mm, ticks_per_mm)
-    best_tpm     = None        # best TICKS_PER_MM so far (used for return move)
+    run_number  = 0
+    all_results = []          # list of (tick_delta, actual_mm, ticks_per_mm)
+    best_tpm    = _DEFAULT_TPM  # starts from vesc_gantry.py, improves each run
 
     while True:
         run_number += 1
         print(f"─── Run {run_number} " + "─" * (52 - len(str(run_number))))
         print()
 
-        # Drive forward
-        print(f"Driving forward at speed={TRAVEL_SPEED} "
-              f"(duty={TRAVEL_SPEED / 100.0 * MAX_DUTY_GANTRY:.2f}) "
-              f"for {CALIBRATION_DURATION_S:.0f}s...")
-        tick_delta, t_before, t_after = _run_timed(gantry, CALIBRATION_DURATION_S)
+        # Drive forward toward the target distance
+        tick_delta, t_before, t_after = _run_to_target(
+            gantry, CALIBRATION_TARGET_MM, best_tpm
+        )
         print(f"  Ticks before : {t_before}")
         print(f"  Ticks after  : {t_after}")
         print(f"  Tick delta   : {tick_delta}")
@@ -145,10 +179,9 @@ def main():
         print("Measure the distance the carriage physically moved (ruler).")
         print("Include coasting distance after the motor stopped.")
         actual_mm   = _ask_float("Measured distance in mm: ")
-        ticks_per_mm = tick_delta / actual_mm
-        tolerance_ticks  = max(1, round(ticks_per_mm * 2))
-        position_error_mm = tolerance_ticks / ticks_per_mm
-        best_tpm = ticks_per_mm   # use latest estimate for return move
+        ticks_per_mm      = tick_delta / actual_mm
+        tolerance_ticks   = max(1, round(ticks_per_mm * 2))
+        best_tpm          = ticks_per_mm   # use updated estimate for next run's target
 
         all_results.append((tick_delta, actual_mm, ticks_per_mm))
 

@@ -13,9 +13,11 @@ USB port auto-selects by OS:
 
 Tune MAX_DUTY_GANTRY and TICKS_PER_MM once you've done a free-run calibration:
   1. Position gantry at one end with 300+ mm of clear travel.
-  2. Call gantry.calibrate() — it runs for 5 s and reports the tick delta.
-  3. Measure the actual distance the carriage moved in mm.
-  4. Set TICKS_PER_MM = reported_ticks / actual_mm.
+  2. Run: python calibrate_gantry.py
+  3. Enter the measured distance each run until readings converge.
+  4. Paste the output values for TICKS_PER_MM and POSITION_TOLERANCE_TICKS here.
+
+Current calibration: 3.67 ticks/mm (runs 2–3 average, April 2026).
 """
 
 import struct
@@ -38,14 +40,12 @@ MIN_DUTY_GANTRY  = 0.5            # never go below this when the motor is runnin
 # 80 × 0.5 = 0.40 effective duty — enough torque to drive a loaded gantry.
 TRAVEL_SPEED = 80
 
-# TODO: calibrate — call gantry.calibrate() then set this from the result.
-# Set conservatively LOW so the gantry undershoots (stops short) rather than
-# overshoots and crashes into the end-stop.
-TICKS_PER_MM = 1                  # encoder ticks per mm — needs calibration
+# Calibrated: average of runs 2–3 from calibrate_gantry.py (3.56, 3.78 ticks/mm).
+TICKS_PER_MM = 3.67               # encoder ticks per mm of belt travel
 
 # How close (in ticks) counts as "arrived".
-# At TICKS_PER_MM=1 this is ±3 mm; scale proportionally after calibration.
-POSITION_TOLERANCE_TICKS = 3
+# 3.67 × 2 ≈ 7 ticks = ±1.9 mm
+POSITION_TOLERANCE_TICKS = 7
 
 # Raise TimeoutError if the gantry doesn't reach the target within this many seconds.
 TRAVEL_TIMEOUT_S = 30
