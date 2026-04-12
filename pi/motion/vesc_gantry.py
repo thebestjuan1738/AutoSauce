@@ -37,7 +37,7 @@ TRAVEL_SPEED = 50
 
 # TODO: calibrate — see module docstring.
 # encoder PPR × pole pairs × (motor pulley teeth / belt pulley teeth)
-TICKS_PER_MM = 100                # encoder ticks per mm of belt travel — needs calibration
+TICKS_PER_MM = 50                # encoder ticks per mm of belt travel — needs calibration
 
 # How close (in ticks) counts as "arrived".
 POSITION_TOLERANCE_TICKS = 50
