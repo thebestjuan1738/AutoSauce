@@ -344,14 +344,14 @@ class VESCGantry:
         speed: 0–100 abstract unit.
         """
         duty = (max(0, min(100, speed)) / 100.0) * MAX_DUTY_GANTRY
-        log.info("VESCGantry: forward  speed=%d → duty=%.3f", speed, duty)
-        self._ser.write(_packet_set_duty(duty))
+        log.info("VESCGantry: forward  speed=%d → duty=%.3f", speed, -duty)
+        self._ser.write(_packet_set_duty(-duty))
 
     def reverse(self, speed: int) -> None:
         """Drive the gantry backward (toward dock)."""
         duty = (max(0, min(100, speed)) / 100.0) * MAX_DUTY_GANTRY
         log.info("VESCGantry: reverse  speed=%d → duty=%.3f", speed, duty)
-        self._ser.write(_packet_set_duty(-duty))
+        self._ser.write(_packet_set_duty(duty))
 
     def stop(self) -> None:
         """Release motor current — gantry coasts to a stop."""
