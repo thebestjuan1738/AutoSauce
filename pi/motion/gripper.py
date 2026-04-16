@@ -9,7 +9,7 @@ from pi.motion.arduino_controller import ArduinoController
 
 # ─── Motion constants ──────────────────────────────────────────────────────────
 _TICKS_PER_REV         = 753
-_CLOSE_REVOLUTIONS     = 2.75
+_CLOSE_REVOLUTIONS     = 3.0
 _CLOSE_TARGET_TICKS    = -int(_CLOSE_REVOLUTIONS * _TICKS_PER_REV)   # -1506
 
 
