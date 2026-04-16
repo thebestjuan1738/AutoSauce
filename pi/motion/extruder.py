@@ -36,8 +36,7 @@ class GPIOExtruder:
     def dispense(self) -> None:
         """
         Sends MEET_PLUNGER command to Arduino.
-        Phase 1: drives until the contact pad is touched.
-        Phase 2: advances TICKS_PAST_CONTACT ticks past contact.
+        Drives extruder until the contact pad is touched, then stops.
         """
         log.info("GPIOExtruder: dispensing via collision detection (MEET_PLUNGER)...")
         if not self.arduino.send_command("MEET_PLUNGER", timeout=45.0):

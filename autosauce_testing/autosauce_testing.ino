@@ -32,7 +32,6 @@ volatile long extruderTicks = 0;
 // ====== CONSTANTS ======
 //
 const long TICKS_PER_REV      = 753;
-const long TICKS_PAST_CONTACT = 376;  // ticks to advance past plunger contact (~0.5 rev); tune as needed
 
 //
 // ====== QUADRATURE ISR: GRABBER ======
@@ -187,12 +186,12 @@ void open_extruder() {
 }
 
 //
-// ====== MEET PLUNGER (collision detection + measured advance) ======
-// Phase 1: Drive extruder until plungerPin goes LOW (contact detected).
-// Phase 2: Advance TICKS_PAST_CONTACT more ticks past the contact point.
+// ====== MEET PLUNGER (collision detection — stop at contact) ======
+// Drives extruder until plungerPin goes LOW, then stops.
+// Stall detection aborts if the motor hits end-of-travel without contact.
 //
 void meet_plunger() {
-  Serial.println("Phase 1: moving until plunger contact...");
+  Serial.println("Moving until plunger contact...");
 
   long lastTicks             = extruderTicks;
   unsigned long lastMoveTime = millis();
@@ -211,15 +210,7 @@ void meet_plunger() {
   }
   escExtruder.writeMicroseconds(1500);
   delay(200);
-  Serial.println("Plunger contact detected.");
-
-  long targetTicks = extruderTicks - TICKS_PAST_CONTACT;
-  Serial.print("Phase 2: advancing ");
-  Serial.print(TICKS_PAST_CONTACT);
-  Serial.print(" ticks past contact to ");
-  Serial.println(targetTicks);
-  moveMotorTo(escExtruder, extruderTicks, targetTicks);
-  Serial.println("meet_plunger complete.");
+  Serial.println("Plunger contact detected. Extruder stopped.");
 }
 
 //
