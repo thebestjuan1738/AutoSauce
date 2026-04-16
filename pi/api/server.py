@@ -31,7 +31,7 @@ from pi.ordering.order_manager import OrderManager, OrderStatus
 from pi.ordering.sauce_config import get_coverage_levels
 from pi.utils.logger import log, get_recent_logs
 from pi.motion.arduino_controller import ArduinoController
-from pi.motion.gripper import _CLOSE_TARGET_TICKS as _GRIPPER_CLOSE_TICKS
+from pi.motion.gripper import GPIOGripper, _CLOSE_TARGET_TICKS as _GRIPPER_CLOSE_TICKS
 
 # ─── App ──────────────────────────────────────────────────────────────────────
 
@@ -258,7 +258,12 @@ def manual_home_extruder():
 
 @app.post("/api/manual/close-grabber")
 def manual_close_grabber():
-    return _manual("CLOSE_GRABBER")
+    try:
+        GPIOGripper().close()
+        return {"success": True}
+    except Exception as e:
+        log.error(f"Manual close-grabber failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/api/manual/open-grabber")
 def manual_open_grabber():
