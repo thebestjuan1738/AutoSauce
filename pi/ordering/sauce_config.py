@@ -20,7 +20,7 @@ Scaling to multiple sauces later:
 #
 POSITIONS = {
     "dock":     215,    # where the sauce dispenser sits when not in use
-    "home":     -5,      # resting position between orders (home end of rail)
+    "home":     -10,      # resting position between orders (home end of rail)
     "dispense": 100,    # over the conveyor belt / sandwich
 }
 
