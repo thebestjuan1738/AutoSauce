@@ -24,6 +24,7 @@ import struct
 import sys
 import time
 import serial
+import serial.tools.list_ports
 
 from pi.utils.logger import log
 
@@ -49,6 +50,12 @@ POSITION_TOLERANCE_TICKS = 7
 
 # Raise TimeoutError if the gantry doesn't reach the target within this many seconds.
 TRAVEL_TIMEOUT_S = 30
+
+# USB VID/PID used to identify the VESC regardless of plug-in order.
+# Run `python -m serial.tools.list_ports -v` to verify your device's VID and PID.
+# VESC 4.x / 6.x on STM32 hardware is typically VID=0x0483, PID=0x5740.
+_VESC_VID = 0x0483   # STMicroelectronics
+_VESC_PID = 0x5740   # USB Serial (CDC)
 
 # VESC command IDs
 _COMM_GET_VALUES  = 4
@@ -194,6 +201,23 @@ def _parse_get_values(payload: bytes) -> dict:
     }
 
 
+def _find_vesc_port() -> str:
+    """
+    Scan serial ports for the VESC by USB VID/PID so it is found regardless of
+    USB hub plug-in order.  Falls back to VESC_GANTRY_PORT if no match is found.
+    Run `python -m serial.tools.list_ports -v` to verify _VESC_VID / _VESC_PID.
+    """
+    for p in serial.tools.list_ports.comports():
+        if p.vid == _VESC_VID and p.pid == _VESC_PID:
+            log.info("VESCGantry: matched VESC on %s (%s)", p.device, p.description)
+            return p.device
+    log.warning(
+        "VESCGantry: no port matched VID=0x%04X PID=0x%04X — falling back to %s",
+        _VESC_VID, _VESC_PID, VESC_GANTRY_PORT,
+    )
+    return VESC_GANTRY_PORT
+
+
 # ─── Driver ───────────────────────────────────────────────────────────────────
 
 class VESCGantry:
@@ -206,8 +230,9 @@ class VESCGantry:
     """
 
     def __init__(self):
-        log.info("VESCGantry: connecting to %s @ %d baud", VESC_GANTRY_PORT, VESC_GANTRY_BAUD)
-        self._ser = serial.Serial(VESC_GANTRY_PORT, VESC_GANTRY_BAUD, timeout=1)
+        port = _find_vesc_port()
+        log.info("VESCGantry: connecting to %s @ %d baud", port, VESC_GANTRY_BAUD)
+        self._ser = serial.Serial(port, VESC_GANTRY_BAUD, timeout=1)
         # Assumes the gantry is physically at the dock (0 mm) when the program starts.
         self._position_mm = 0
         log.info("VESCGantry: connected")

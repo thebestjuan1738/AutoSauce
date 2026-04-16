@@ -17,31 +17,53 @@ class ArduinoController:
             return cls._instance
 
     _BOOT_TIMEOUT = 10.0   # seconds to wait for READY banner
-    _LINUX_PORTS  = ['/dev/ttyACM0', '/dev/ttyUSB0']
+
+    # Known Arduino/clone USB VIDs — matched before falling back to description keywords.
+    _ARDUINO_VIDS = frozenset({
+        0x2341,  # Arduino SA (Uno, Mega, …)
+        0x2A03,  # Arduino SRL
+        0x1A86,  # WCH CH340 / CH341 clones
+        0x0403,  # FTDI FT232
+        0x10C4,  # Silicon Labs CP210x
+    })
+    # VID used by most VESC hardware — ports with this VID are never probed as Arduino.
+    _VESC_VID = 0x0483   # STMicroelectronics
 
     @staticmethod
     def _candidate_ports() -> list:
-        """Return ordered list of ports to try based on platform."""
-        if sys.platform.startswith('win'):
-            # On Windows, scan for COM ports with Arduino/CH340/FTDI descriptors first,
-            # then fall back to all available COM ports in numerical order.
-            arduino_keywords = ('arduino', 'ch340', 'ch341', 'ftdi', 'usb serial')
-            priority = []
-            others   = []
-            for p in serial.tools.list_ports.comports():
-                desc = (p.description or '').lower()
-                if any(k in desc for k in arduino_keywords):
-                    priority.append(p.device)
-                else:
-                    others.append(p.device)
-            # Sort COM ports numerically so COM3 comes before COM10
-            def _com_key(name):
-                try:
-                    return int(name.upper().replace('COM', ''))
-                except ValueError:
-                    return 999
-            return sorted(priority, key=_com_key) + sorted(others, key=_com_key)
-        return ArduinoController._LINUX_PORTS
+        """
+        Return an ordered list of ports to try, skipping known VESC ports.
+        Works regardless of USB hub plug-in order.
+        Priority: exact VID match → description keyword → everything else.
+        """
+        arduino_keywords = ('arduino', 'ch340', 'ch341', 'ftdi', 'usb serial')
+
+        def _sort_key(name):
+            nums = ''.join(c for c in name if c.isdigit())
+            return int(nums) if nums else 999
+
+        by_vid     = []
+        by_keyword = []
+        others     = []
+
+        for p in serial.tools.list_ports.comports():
+            if p.vid == ArduinoController._VESC_VID:
+                continue  # skip VESC — never try it as an Arduino
+            desc = (p.description or '').lower()
+            if p.vid in ArduinoController._ARDUINO_VIDS:
+                by_vid.append(p.device)
+            elif any(k in desc for k in arduino_keywords):
+                by_keyword.append(p.device)
+            else:
+                others.append(p.device)
+
+        # On Linux, restrict the last-resort fallback to ttyACM/ttyUSB paths only
+        if not sys.platform.startswith('win'):
+            others = [p for p in others if '/dev/ttyACM' in p or '/dev/ttyUSB' in p]
+
+        return (sorted(by_vid, key=_sort_key) +
+                sorted(by_keyword, key=_sort_key) +
+                sorted(others, key=_sort_key))
 
     def _init_serial(self):
         self.serial_lock = threading.Lock()
