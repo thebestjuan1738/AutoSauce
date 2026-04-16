@@ -28,8 +28,8 @@ POSITIONS = {
 # While the extruder is running the gantry travels from DISPENSE_SWEEP_START_MM
 # to DISPENSE_SWEEP_END_MM for even sauce coverage across the full sandwich length.
 # Set both to the same value to disable sweeping.
-DISPENSE_SWEEP_START_MM = 50
-DISPENSE_SWEEP_END_MM   = 75
+DISPENSE_SWEEP_START_MM = 0
+DISPENSE_SWEEP_END_MM   = 50
 
 # ─── Gripper (encoder-based, no timing config needed) ────────────────────────
 # Tune _CLOSE_TARGET_TICKS in pi/motion/gripper.py if grip depth needs adjusting.
