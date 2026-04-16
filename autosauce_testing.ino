@@ -95,19 +95,15 @@ long homeMotor(Servo &esc, volatile long &ticks, int strongPWM) {
 //
 // ====== BLOCKING MOVE TO TARGET ======
 // Drives toward target, stops when within MOVE_TOLERANCE ticks.
-// Startup timeout: waits up to MOVE_START_MS for the first encoder tick.
-// Stall timeout: aborts if no tick arrives within MOVE_STALL_MS mid-move.
+// Stall detection aborts if no encoder movement for MOVE_STALL_MS ms.
 //
-const long MOVE_TOLERANCE    = 8;     // ±8 ticks (~±1° at 753 ticks/rev)
-const long MOVE_START_MS     = 4000;  // allow up to 4 s for motor to start moving
-const long MOVE_STALL_MS     = 1000;  // abort if stalled mid-move for 1 s
+const long MOVE_TOLERANCE  = 8;     // ±8 ticks (~±1° at 753 ticks/rev)
+const long MOVE_STALL_MS   = 1000;  // abort if stalled for 1 s
 
 void moveMotorTo(Servo &esc, volatile long &ticks, long target) {
 
-  long lastTicks             = ticks;
-  unsigned long startTime    = millis();
-  unsigned long lastMoveTime = 0;   // 0 = not yet moving
-  bool started               = false;
+  long lastTicks       = ticks;
+  unsigned long lastMoveTime = millis();
 
   while (abs(ticks - target) > MOVE_TOLERANCE) {
 
@@ -117,24 +113,14 @@ void moveMotorTo(Servo &esc, volatile long &ticks, long target) {
       esc.writeMicroseconds(1700);   // move positive direction
     }
 
+    // Stall detection — abort if encoder hasn't moved in MOVE_STALL_MS
     if (ticks != lastTicks) {
       lastTicks    = ticks;
       lastMoveTime = millis();
-      started      = true;
     }
-
-    if (!started) {
-      // Still waiting for first tick — apply startup timeout
-      if (millis() - startTime > MOVE_START_MS) {
-        Serial.println("WARN: moveMotorTo motor did not start — aborting");
-        break;
-      }
-    } else {
-      // Moving — apply stall timeout between ticks
-      if (millis() - lastMoveTime > MOVE_STALL_MS) {
-        Serial.println("WARN: moveMotorTo stall detected — aborting");
-        break;
-      }
+    if (millis() - lastMoveTime > MOVE_STALL_MS) {
+      Serial.println("WARN: moveMotorTo stall detected — aborting");
+      break;
     }
   }
 
@@ -161,23 +147,12 @@ void setup() {
   attachInterrupt(digitalPinToInterrupt(extruderB), ISR_extruderB, CHANGE);
 
   // ESCs
-  escGrabber.attach(SIGNAL_PIN_GRABBER);
+  escGrabber.attach(SIGNAL_PIN_GRABBER);  // Attach to any pin, we will use writeMicroseconds() with custom signals
   escExtruder.attach(SIGNAL_PIN_EXTRUDER);
-
-  // ── ESC arming sequence ──────────────────────────────
-  // ESCs require full-high → full-low → neutral before they accept commands.
-  escGrabber.writeMicroseconds(1900);
-  escExtruder.writeMicroseconds(1900);
-  delay(2000);
-
-  escGrabber.writeMicroseconds(1100);
-  escExtruder.writeMicroseconds(1100);
-  delay(2000);
 
   escGrabber.writeMicroseconds(1500);
   escExtruder.writeMicroseconds(1500);
   delay(2000);
-  // ─────────────────────────────────────────────────────
 
   Serial.println("=== ARDUINO READY ===");
 }
@@ -195,8 +170,8 @@ void processCommand(String cmd) {
     Serial.println("DONE");
   } 
   else if (cmd == "HOME_EXTRUDER") {
-    // 1700 retracts the extruder to its home end-stop.
-    // Dispense then drives at 1300 (negative ticks) toward -DISPENSE_TARGET.
+    // 1300 might be appropriate for extruder based on Python, but setup originally used 1700.
+    // Changing to 1700 matching previous setup() homing, feel free to tune.
     homeMotor(escExtruder, extruderTicks, 1700);
     Serial.println("DONE");
   }
