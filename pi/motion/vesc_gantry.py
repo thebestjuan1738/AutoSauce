@@ -51,13 +51,13 @@ POSITION_TOLERANCE_TICKS = 7
 # Raise TimeoutError if the gantry doesn't reach the target within this many seconds.
 TRAVEL_TIMEOUT_S = 30
 
-# P-controller acceleration / deceleration zones.
-# Duty ramps linearly from MIN_DUTY_GANTRY up to MAX_DUTY_GANTRY over the first
-# ACCEL_ZONE_MM of travel, then back down over the last DECEL_ZONE_MM.
-# Increase ACCEL_ZONE_MM if the gantry still jerks on start;
-# decrease if very short moves stall (the two zones are automatically capped to
-# half the move distance so they never overlap).
-ACCEL_ZONE_MM = 30   # mm from start over which duty ramps up
+# Startup accel ramp — duty rises linearly from 0 → P-controlled value over this
+# many seconds.  Keeps the torque increase gradual so the gantry doesn't lurch.
+# Raise ACCEL_RAMP_S if jitter persists; lower it if the start feels too slow.
+ACCEL_RAMP_S = 0.25  # seconds to ramp from 0 to full duty on move start
+
+# Deceleration zone — duty ramps from MAX_DUTY_GANTRY down to MIN_DUTY_GANTRY
+# over the last DECEL_ZONE_MM of travel.
 DECEL_ZONE_MM = 50   # mm before target where ramp begins
 
 # Stall detection — if tachometer_abs doesn't advance for this long, fire a torque kick.
@@ -329,23 +329,17 @@ class VESCGantry:
         print(f"    TICKS_PER_MM = {delta} / <actual_mm_travelled>")
         print(f"    POSITION_TOLERANCE_TICKS = round(TICKS_PER_MM * 2)  # ±2 mm")
 
-    def _p_duty(self, ticks_remaining: int, ticks_travelled: int, delta_ticks: int) -> float:
+    def _p_duty(self, ticks_remaining: int, delta_ticks: int) -> float:
         """
-        Trapezoidal ramp: ramps up from MIN_DUTY over the first ACCEL_ZONE_MM,
-        cruises at MAX_DUTY, then ramps back down to MIN_DUTY over the last
-        DECEL_ZONE_MM.  For short moves the two zones are each capped to half
-        the total travel so they never overlap.
+        Decel ramp: full duty during cruise, tapers to MIN_DUTY over the last
+        DECEL_ZONE_MM.  Short moves use the full delta as the zone so they
+        don't stall on small hops.
         """
-        half_ticks = delta_ticks // 2 or 1
-        accel_zone_ticks = min(int(ACCEL_ZONE_MM * TICKS_PER_MM), half_ticks)
-        decel_zone_ticks = min(int(DECEL_ZONE_MM * TICKS_PER_MM), half_ticks)
-
-        # ramp_up:   0.0 → 1.0 during the first accel_zone_ticks of travel
-        ramp_up   = min(1.0, ticks_travelled / accel_zone_ticks) if accel_zone_ticks else 1.0
-        # ramp_down: 1.0 → 0.0 during the last decel_zone_ticks before the target
-        ramp_down = min(1.0, ticks_remaining / decel_zone_ticks) if decel_zone_ticks else 1.0
-
-        ramp = min(ramp_up, ramp_down)   # take the lower of the two limits
+        decel_zone_ticks = int(DECEL_ZONE_MM * TICKS_PER_MM)
+        effective_zone   = min(decel_zone_ticks, delta_ticks) or 1
+        if ticks_remaining >= effective_zone:
+            return MAX_DUTY_GANTRY
+        ramp = ticks_remaining / effective_zone          # 1.0 → 0.0 as target approaches
         return MIN_DUTY_GANTRY + ramp * (MAX_DUTY_GANTRY - MIN_DUTY_GANTRY)
 
     def move_to(self, position_mm: int) -> None:
@@ -371,6 +365,7 @@ class VESCGantry:
         )
 
         deadline        = time.monotonic() + TRAVEL_TIMEOUT_S
+        move_start      = time.monotonic()   # used for time-based accel ramp
         last_tick_time  = time.monotonic()
         last_ticks_seen = start_ticks
         kicks           = 0
@@ -394,8 +389,11 @@ class VESCGantry:
                     f"(~{int(ticks_remaining / TICKS_PER_MM)}mm remaining)"
                 )
 
-            # ── Trapezoidal ramp — update duty every poll cycle ───────────
-            duty = self._p_duty(ticks_remaining, ticks_travelled, delta_ticks)
+            # ── Accel (time) + decel (position) ramp ─────────────────────
+            # time_factor ramps 0→1 over ACCEL_RAMP_S so torque builds gradually
+            # instead of jumping from 0 to MIN_DUTY instantly.
+            time_factor = min(1.0, (time.monotonic() - move_start) / ACCEL_RAMP_S)
+            duty = self._p_duty(ticks_remaining, delta_ticks) * time_factor
             self._ser.write(_packet_set_duty(-direction * duty))
 
             # Stall detection — no tachometer progress for STALL_DETECT_S
