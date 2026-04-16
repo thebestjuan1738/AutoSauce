@@ -63,6 +63,12 @@ STALL_KICK_DUTY  = MAX_DUTY_GANTRY   # kick at the duty ceiling (0.70)
 STALL_KICK_S     = 0.35  # how long to hold the kick
 STALL_MAX_KICKS  = 3     # give up after this many failed kicks
 
+# Launch kick — applied at the very start of each move to overcome static friction.
+# If the gantry stalls on the first movement then moves once the stall kick fires,
+# increase LAUNCH_KICK_DUTY or LAUNCH_KICK_S until it breaks away cleanly.
+LAUNCH_KICK_DUTY = MAX_DUTY_GANTRY   # duty for the initial breakaway burst
+LAUNCH_KICK_S    = 0.3               # how long to hold the burst (seconds)
+
 # USB VID/PID used to identify the VESC regardless of plug-in order.
 # Run `python -m serial.tools.list_ports -v` to verify your device's VID and PID.
 # VESC 4.x / 6.x on STM32 hardware is typically VID=0x0483, PID=0x5740.
@@ -361,6 +367,12 @@ class VESCGantry:
             "VESCGantry: move_to %dmm  (from %dmm, Δ%+d ticks needed)",
             position_mm, self._position_mm, direction * delta_ticks,
         )
+
+        # Launch kick — brief full-duty burst to break static friction before the
+        # P-controller takes over.  Avoids waiting for stall detection to fire.
+        log.debug("VESCGantry: launch kick duty=%.2f for %.2fs", LAUNCH_KICK_DUTY, LAUNCH_KICK_S)
+        self._ser.write(_packet_set_duty(-direction * LAUNCH_KICK_DUTY))
+        time.sleep(LAUNCH_KICK_S)
 
         deadline        = time.monotonic() + TRAVEL_TIMEOUT_S
         last_tick_time  = time.monotonic()
