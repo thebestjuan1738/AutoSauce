@@ -7,11 +7,6 @@ Delegates motion control to the Arduino via USB serial.
 from pi.utils.logger import log
 from pi.motion.arduino_controller import ArduinoController
 
-# ─── Motion constants ──────────────────────────────────────────────────────────
-_TICKS_PER_REV         = 753
-_DISPENSE_REVOLUTIONS  = 2.0
-_DISPENSE_TARGET_TICKS = -int(_DISPENSE_REVOLUTIONS * _TICKS_PER_REV)   # -1506 (extends away from home)
-
 
 class GPIOExtruder:
     """
@@ -39,14 +34,18 @@ class GPIOExtruder:
         log.info("GPIOExtruder: homing complete")
 
     def dispense(self) -> None:
-        """Sends MOVE_EXTRUDER command to extend plunger."""
-        log.info(f"GPIOExtruder: dispensing to {_DISPENSE_TARGET_TICKS} ticks...")
-        if not self.arduino.send_command(f"MOVE_EXTRUDER:{_DISPENSE_TARGET_TICKS}", timeout=45.0):
+        """
+        Sends MEET_PLUNGER command to Arduino.
+        Phase 1: drives until the contact pad is touched.
+        Phase 2: advances TICKS_PAST_CONTACT ticks past contact.
+        """
+        log.info("GPIOExtruder: dispensing via collision detection (MEET_PLUNGER)...")
+        if not self.arduino.send_command("MEET_PLUNGER", timeout=45.0):
             raise RuntimeError("GPIOExtruder: dispense timed out or failed")
         log.info("GPIOExtruder: dispense done")
 
     def retract(self) -> None:
-        """Sends MOVE_EXTRUDER:0 to retract plunger."""
+        """Sends MOVE_EXTRUDER:0 to retract plunger to home."""
         log.info("GPIOExtruder: retracting...")
         if not self.arduino.send_command("MOVE_EXTRUDER:0", timeout=45.0):
             raise RuntimeError("GPIOExtruder: retract timed out or failed")
