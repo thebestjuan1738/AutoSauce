@@ -42,7 +42,7 @@ MIN_DUTY_GANTRY  = 0.5           # never go below this when the motor is running
 TRAVEL_SPEED = 80
 
 # Calibrated: average of runs 2–3 from calibrate_gantry.py (3.56, 3.78 ticks/mm).
-TICKS_PER_MM = 3.672               # encoder ticks per mm of belt travel
+TICKS_PER_MM = 3.67               # encoder ticks per mm of belt travel
 
 # How close (in ticks) counts as "arrived".
 # 3.67 × 2 ≈ 7 ticks = ±1.9 mm
@@ -50,6 +50,12 @@ POSITION_TOLERANCE_TICKS = 7
 
 # Raise TimeoutError if the gantry doesn't reach the target within this many seconds.
 TRAVEL_TIMEOUT_S = 30
+
+# P-controller deceleration zone.
+# Duty ramps linearly from MAX_DUTY_GANTRY down to MIN_DUTY_GANTRY over the last
+# DECEL_ZONE_MM millimetres of travel.  Increase to start braking earlier;
+# decrease if the gantry stalls in the ramp zone.
+DECEL_ZONE_MM = 50   # mm before target where ramp begins
 
 # Stall detection — if tachometer_abs doesn't advance for this long, fire a torque kick.
 STALL_DETECT_S   = 0.6   # seconds of no progress before a kick
@@ -320,6 +326,20 @@ class VESCGantry:
         print(f"    TICKS_PER_MM = {delta} / <actual_mm_travelled>")
         print(f"    POSITION_TOLERANCE_TICKS = round(TICKS_PER_MM * 2)  # ±2 mm")
 
+    def _p_duty(self, ticks_remaining: int, delta_ticks: int) -> float:
+        """
+        P-controller ramp: returns the duty to apply given how far is left.
+        Full duty during cruise; linearly tapers to MIN_DUTY over the decel zone.
+        Short moves entirely within the decel zone use the full zone for the ramp
+        so they don't stall on very small hops.
+        """
+        decel_zone_ticks = int(DECEL_ZONE_MM * TICKS_PER_MM)
+        effective_zone   = min(decel_zone_ticks, delta_ticks)
+        if ticks_remaining >= effective_zone or effective_zone == 0:
+            return MAX_DUTY_GANTRY
+        ramp = ticks_remaining / effective_zone          # 1.0 → 0.0 as target approaches
+        return MIN_DUTY_GANTRY + ramp * (MAX_DUTY_GANTRY - MIN_DUTY_GANTRY)
+
     def move_to(self, position_mm: int) -> None:
         """
         Closed-loop move to position_mm (from the dock end of the rail).
@@ -342,12 +362,7 @@ class VESCGantry:
             position_mm, self._position_mm, direction * delta_ticks,
         )
 
-        if direction > 0:
-            self.start(TRAVEL_SPEED)
-        else:
-            self.reverse(TRAVEL_SPEED)
-
-        deadline = time.monotonic() + TRAVEL_TIMEOUT_S
+        deadline        = time.monotonic() + TRAVEL_TIMEOUT_S
         last_tick_time  = time.monotonic()
         last_ticks_seen = start_ticks
         kicks           = 0
@@ -363,7 +378,6 @@ class VESCGantry:
 
             if time.monotonic() > deadline:
                 self.stop()
-                # Best-effort: update position based on how far we actually got
                 actual_mm = int(ticks_travelled / TICKS_PER_MM)
                 self._position_mm += direction * actual_mm
                 raise TimeoutError(
@@ -371,6 +385,10 @@ class VESCGantry:
                     f"moving to {position_mm}mm "
                     f"(~{int(ticks_remaining / TICKS_PER_MM)}mm remaining)"
                 )
+
+            # ── P ramp — update duty every poll cycle ──────────────────────
+            duty = self._p_duty(ticks_remaining, delta_ticks)
+            self._ser.write(_packet_set_duty(-direction * duty))
 
             # Stall detection — no tachometer progress for STALL_DETECT_S
             if current_ticks != last_ticks_seen:
@@ -394,14 +412,9 @@ class VESCGantry:
                 kick_duty = STALL_KICK_DUTY if direction > 0 else -STALL_KICK_DUTY
                 self._ser.write(_packet_set_duty(-kick_duty))
                 time.sleep(STALL_KICK_S)
-                # Resume normal travel duty
-                if direction > 0:
-                    self.start(TRAVEL_SPEED)
-                else:
-                    self.reverse(TRAVEL_SPEED)
-                last_tick_time = time.monotonic()  # reset stall clock
+                last_tick_time = time.monotonic()  # reset stall clock; P ramp resumes next iter
 
-            time.sleep(0.05)  # poll at 2 0 Hz
+            time.sleep(0.05)  # poll at 20 Hz
 
         self.stop()
         self._position_mm = position_mm

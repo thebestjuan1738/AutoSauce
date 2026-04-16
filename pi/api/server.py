@@ -190,20 +190,21 @@ def health():
 
 # ─── Debug endpoints ──────────────────────────────────────────────────────────
 
-_TEST_GRIPPER_TICKS = -200   # slight close (~0.27 rev), vs full close -2072
-_TEST_EXTRUDER_TICKS = -200  # slight extend (~0.27 rev), vs full dispense -1506
+# Match the full-travel targets from gripper.py and extruder.py
+_GRIPPER_CLOSE_TICKS  = -int(2.75 * 753)   # -2070
+_EXTRUDER_DISPENSE_TICKS = -int(2.0 * 753)  # -1506
 
 
 @app.post("/api/debug/test-gripper")
 def debug_test_gripper():
-    """Fires the gripper slightly — closes a bit then returns to open."""
+    """Full gripper cycle — close fully then open fully."""
     try:
         arduino = ArduinoController()
-        if not arduino.send_command(f"MOVE_GRIPPER:{_TEST_GRIPPER_TICKS}", timeout=10.0):
-            raise RuntimeError("MOVE_GRIPPER command timed out")
-        if not arduino.send_command("MOVE_GRIPPER:0", timeout=10.0):
+        if not arduino.send_command(f"MOVE_GRIPPER:{_GRIPPER_CLOSE_TICKS}", timeout=15.0):
+            raise RuntimeError("MOVE_GRIPPER (close) timed out")
+        if not arduino.send_command("MOVE_GRIPPER:0", timeout=15.0):
             raise RuntimeError("MOVE_GRIPPER:0 (open) timed out")
-        log.info("Debug: gripper test complete")
+        log.info("Debug: gripper full cycle complete")
         return {"success": True}
     except Exception as e:
         log.error(f"Debug gripper test failed: {e}")
@@ -212,14 +213,14 @@ def debug_test_gripper():
 
 @app.post("/api/debug/test-extruder")
 def debug_test_extruder():
-    """Fires the extruder slightly — extends a bit then retracts."""
+    """Full extruder cycle — dispense fully then retract fully."""
     try:
         arduino = ArduinoController()
-        if not arduino.send_command(f"MOVE_EXTRUDER:{_TEST_EXTRUDER_TICKS}", timeout=10.0):
-            raise RuntimeError("MOVE_EXTRUDER command timed out")
-        if not arduino.send_command("MOVE_EXTRUDER:0", timeout=10.0):
+        if not arduino.send_command(f"MOVE_EXTRUDER:{_EXTRUDER_DISPENSE_TICKS}", timeout=45.0):
+            raise RuntimeError("MOVE_EXTRUDER (dispense) timed out")
+        if not arduino.send_command("MOVE_EXTRUDER:0", timeout=45.0):
             raise RuntimeError("MOVE_EXTRUDER:0 (retract) timed out")
-        log.info("Debug: extruder test complete")
+        log.info("Debug: extruder full cycle complete")
         return {"success": True}
     except Exception as e:
         log.error(f"Debug extruder test failed: {e}")
