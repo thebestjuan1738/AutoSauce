@@ -12,8 +12,8 @@ Motion sequence per order:
     1.  Gantry → dock
     2.  Gripper close
     3.  Gantry → dispense
-    4.  Conveyor + extruder start simultaneously
-    5.  Extruder finishes (shorter duration)
+    4.  Conveyor + extruder + gantry zigzag start simultaneously
+    5.  Extruder finishes; zigzag stops and gantry returns to dispense centre
     6.  Conveyor finishes (longer duration)
     7.  Gantry → dock
     8.  Gripper open
@@ -30,7 +30,7 @@ from dataclasses import dataclass, field
 from enum import Enum, auto
 from typing import Optional
 
-from pi.ordering.sauce_config import get_profile, POSITIONS
+from pi.ordering.sauce_config import get_profile, POSITIONS, ZIGZAG_AMPLITUDE_MM
 from pi.utils.logger import log
 
 
@@ -151,20 +151,31 @@ class OrderManager:
         log.info("Step 3: gantry → dispense")
         self._gantry.move_to(POSITIONS["dispense"])
 
-        # 4+5. Conveyor and extruder run simultaneously
-        # Conveyor runs on a separate thread; extruder blocks the worker thread.
-        # Both start at the same time. Extruder finishes first (shorter travel).
-        # Worker then waits for conveyor thread to finish, then retracts plunger.
-        log.info("Step 4+5: conveyor + extruder start")
+        # 4+5. Conveyor, extruder, and gantry zigzag run simultaneously.
+        # Zigzag oscillates the gantry ±ZIGZAG_AMPLITUDE_MM around the dispense
+        # position while the extruder is running for even sauce coverage.
+        # Extruder blocks this thread; when it finishes the stop event is set
+        # and zigzag completes its current move then returns to centre.
+        # Conveyor is joined before retract.
+        log.info("Step 4+5: conveyor + extruder + zigzag start")
+        stop_zigzag = threading.Event()
         conveyor_thread = threading.Thread(
             target=self._run_conveyor,
             args=(profile["conveyor_speed"], profile["conveyor_ms"]),
             daemon=True,
         )
+        zigzag_thread = threading.Thread(
+            target=self._run_zigzag,
+            args=(POSITIONS["dispense"], stop_zigzag),
+            daemon=True,
+        )
         conveyor_thread.start()
+        zigzag_thread.start()
         self._extruder.dispense()                        # blocks until done
+        stop_zigzag.set()
+        zigzag_thread.join()                             # finishes current move + returns to centre
         conveyor_thread.join()                           # wait for belt to finish
-        log.info("Step 6: conveyor done")
+        log.info("Step 6: conveyor + zigzag done")
         self._extruder.retract()                         # retract plunger after belt clears
 
         # 7. Return to dock
@@ -189,6 +200,20 @@ class OrderManager:
             self._conveyor.reverse(speed)
             time.sleep(half)
         self._conveyor.stop()
+
+    def _run_zigzag(self, centre_mm: int, stop: threading.Event) -> None:
+        """
+        Oscillate the gantry ±ZIGZAG_AMPLITUDE_MM around centre_mm until stop is set.
+        Always returns to centre_mm so the subsequent move_to(dock) starts from a
+        known position.
+        """
+        while not stop.is_set():
+            self._gantry.move_to(centre_mm + ZIGZAG_AMPLITUDE_MM)
+            if stop.is_set():
+                break
+            self._gantry.move_to(centre_mm - ZIGZAG_AMPLITUDE_MM)
+        self._gantry.move_to(centre_mm)
+        log.info("Zigzag: returned to centre (%dmm)", centre_mm)
 
     def _safe_abort(self) -> None:
         """Best-effort cleanup after a failure. Tries to stop all actuators."""

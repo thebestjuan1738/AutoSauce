@@ -24,6 +24,11 @@ POSITIONS = {
     "dispense": 100,    # over the conveyor belt / sandwich
 }
 
+# Gantry zigzag amplitude during dispense (mm either side of the dispense position).
+# Gantry oscillates between dispense-ZIGZAG_AMPLITUDE_MM and dispense+ZIGZAG_AMPLITUDE_MM
+# while the extruder is running for even sauce coverage.
+ZIGZAG_AMPLITUDE_MM = 7
+
 # ─── Gripper (encoder-based, no timing config needed) ────────────────────────
 # Tune _CLOSE_TARGET_TICKS in pi/motion/gripper.py if grip depth needs adjusting.
 
