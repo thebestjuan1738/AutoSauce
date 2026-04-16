@@ -67,7 +67,7 @@ STALL_MAX_KICKS  = 3     # give up after this many failed kicks
 # If the gantry stalls on the first movement then moves once the stall kick fires,
 # increase LAUNCH_KICK_DUTY or LAUNCH_KICK_S until it breaks away cleanly.
 LAUNCH_KICK_DUTY = MAX_DUTY_GANTRY   # duty for the initial breakaway burst
-LAUNCH_KICK_S    = 0.3               # how long to hold the burst (seconds)
+LAUNCH_KICK_S    = 0.75               # how long to hold the burst (seconds)
 
 # USB VID/PID used to identify the VESC regardless of plug-in order.
 # Run `python -m serial.tools.list_ports -v` to verify your device's VID and PID.
