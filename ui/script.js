@@ -351,8 +351,13 @@ logRefreshBtn.addEventListener('click', fetchLogs);
 }(logList));
 
 /* -----------------------------------------------
-   Debug buttons
+   Debug buttons + Manual controls modal
 ----------------------------------------------- */
+
+const debugManualBtn   = document.getElementById('debug-manual-btn');
+const debugRestartBtn  = document.getElementById('debug-restart-btn');
+const manualModal      = document.getElementById('manual-modal');
+const manualModalClose = document.getElementById('manual-modal-close');
 
 const debugHomeGrabberBtn  = document.getElementById('debug-home-grabber-btn');
 const debugHomeExtruderBtn = document.getElementById('debug-home-extruder-btn');
@@ -360,7 +365,13 @@ const debugCloseGrabberBtn = document.getElementById('debug-close-grabber-btn');
 const debugOpenGrabberBtn  = document.getElementById('debug-open-grabber-btn');
 const debugOpenExtruderBtn = document.getElementById('debug-open-extruder-btn');
 const debugMeetPlungerBtn  = document.getElementById('debug-meet-plunger-btn');
-const debugRestartBtn      = document.getElementById('debug-restart-btn');
+
+// Open / close manual controls modal
+debugManualBtn.addEventListener('click', () => { manualModal.hidden = false; });
+manualModalClose.addEventListener('click', () => { manualModal.hidden = true; });
+manualModal.addEventListener('click', e => {
+  if (e.target === manualModal) manualModal.hidden = true;
+});
 
 async function debugAction(endpoint, btn, workingLabel) {
   const original = btn.textContent;
@@ -375,6 +386,7 @@ async function debugAction(endpoint, btn, workingLabel) {
     btn.textContent = 'Error';
     console.warn(`[SauceBot] ${endpoint} failed:`, err.message);
   } finally {
+    fetchLogs();
     setTimeout(() => {
       btn.textContent = original;
       btn.disabled = false;

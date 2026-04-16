@@ -498,8 +498,7 @@ header h1 {
 /* -- Debug button bar -------------------------------- */
 .log-debug-bar {
   display: grid;
-  grid-template-columns: 1fr 1fr 1fr;
-  grid-template-rows: auto auto auto;
+  grid-template-columns: 1fr 1fr;
   gap: 8px;
   padding: 10px 16px 12px;
   border-bottom: 1px solid rgba(255,255,255,0.08);
@@ -517,6 +516,53 @@ header h1 {
   background: rgba(239,68,68,0.25);
   color: #f87171;
   border-color: rgba(239,68,68,0.7);
+}
+
+/* -- Manual controls modal ------------------------- */
+.manual-modal {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.55);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+  z-index: 600;
+}
+.manual-modal[hidden] {
+  display: none;
+}
+
+.manual-modal-card {
+  background: #1e1e2e;
+  border: 1px solid rgba(99, 102, 241, 0.45);
+  border-radius: 18px;
+  padding: 20px;
+  width: min(420px, 92vw);
+  box-shadow: 0 20px 60px rgba(0,0,0,0.5);
+}
+
+.manual-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 14px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid rgba(255,255,255,0.08);
+}
+.manual-modal-header span {
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 3px;
+  text-transform: uppercase;
+  color: #a5b4fc;
+}
+
+.manual-modal-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
 }
 
 .log-debug-btn {
