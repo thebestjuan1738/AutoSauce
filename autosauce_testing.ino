@@ -31,7 +31,8 @@ volatile long extruderTicks = 0;
 //
 // ====== CONSTANTS ======
 //
-const long TICKS_PER_REV      = 753;
+const long TICKS_PER_REV = 753;
+const long DISPENSE_TICKS = 30;  // ticks to push past contact during a sauce dispense; tune as needed
 
 //
 // ====== QUADRATURE ISR: GRABBER ======
@@ -212,6 +213,20 @@ void meet_plunger() {
 }
 
 //
+// ====== DISPENSE SAUCE ======
+// Pushes extruder a small fixed amount from its current position.
+// Call immediately after meet_plunger().
+//
+void dispense_sauce() {
+  long target = extruderTicks - DISPENSE_TICKS;
+  Serial.print("Dispensing ");
+  Serial.print(DISPENSE_TICKS);
+  Serial.println(" ticks...");
+  moveMotorTo(escExtruder, extruderTicks, target);
+  Serial.println("Dispense complete.");
+}
+
+//
 // ====== SETUP ======
 //
 void setup() {
@@ -279,6 +294,10 @@ void processCommand(String cmd) {
   }
   else if (cmd == "MEET_PLUNGER") {
     meet_plunger();
+    Serial.println("DONE");
+  }
+  else if (cmd == "DISPENSE_SAUCE") {
+    dispense_sauce();
     Serial.println("DONE");
   }
   else if (cmd == "CLOSE_GRABBER") {

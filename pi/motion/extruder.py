@@ -35,12 +35,16 @@ class GPIOExtruder:
 
     def dispense(self) -> None:
         """
-        Sends MEET_PLUNGER command to Arduino.
-        Drives extruder until the contact pad is touched, then stops.
+        Full sauce dispense sequence:
+          1. MEET_PLUNGER — drives until contact pad is touched, then stops.
+          2. DISPENSE_SAUCE — pushes a small fixed amount (DISPENSE_TICKS) past contact.
         """
-        log.info("GPIOExtruder: dispensing via collision detection (MEET_PLUNGER)...")
+        log.info("GPIOExtruder: meeting plunger...")
         if not self.arduino.send_command("MEET_PLUNGER", timeout=45.0):
-            raise RuntimeError("GPIOExtruder: dispense timed out or failed")
+            raise RuntimeError("GPIOExtruder: MEET_PLUNGER timed out or failed")
+        log.info("GPIOExtruder: dispensing sauce...")
+        if not self.arduino.send_command("DISPENSE_SAUCE", timeout=15.0):
+            raise RuntimeError("GPIOExtruder: DISPENSE_SAUCE timed out or failed")
         log.info("GPIOExtruder: dispense done")
 
     def retract(self) -> None:
