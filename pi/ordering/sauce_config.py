@@ -19,9 +19,9 @@ Scaling to multiple sauces later:
 #   0mm                  ~180mm                ~375mm
 #
 POSITIONS = {
-    "dock":     250,    # where the sauce dispenser sits when not in use
+    "dock":     200,    # where the sauce dispenser sits when not in use
     "home":     25,      # resting position between orders (home end of rail)
-    "dispense": 200,    # over the conveyor belt / sandwich
+    "dispense": 100,    # over the conveyor belt / sandwich
 }
 
 # ─── Gripper (encoder-based, no timing config needed) ────────────────────────
