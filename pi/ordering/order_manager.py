@@ -68,14 +68,14 @@ class OrderManager:
         self._extruder = extruder
         self._conveyor = conveyor
 
-    @property
-    def gantry(self):
-        return self._gantry
-
         self._queue: queue.Queue[Order] = queue.Queue()
         self._orders: dict[str, Order] = {}
         self._lock = threading.Lock()
         self._worker = threading.Thread(target=self._run, daemon=True)
+
+    @property
+    def gantry(self):
+        return self._gantry
 
     # ─── Public interface (called by UI) ──────────────────────────────────────
 
