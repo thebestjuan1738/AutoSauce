@@ -94,17 +94,33 @@ long homeMotor(Servo &esc, volatile long &ticks, int strongPWM) {
 
 //
 // ====== BLOCKING MOVE TO TARGET ======
-// Simple, direct, one‑motor motion
+// Drives toward target, stops when within MOVE_TOLERANCE ticks.
+// Stall detection aborts if no encoder movement for MOVE_STALL_MS ms.
 //
+const long MOVE_TOLERANCE  = 8;     // ±8 ticks (~±1° at 753 ticks/rev)
+const long MOVE_STALL_MS   = 1000;  // abort if stalled for 1 s
+
 void moveMotorTo(Servo &esc, volatile long &ticks, long target) {
 
-  while (ticks != target) {
+  long lastTicks       = ticks;
+  unsigned long lastMoveTime = millis();
+
+  while (abs(ticks - target) > MOVE_TOLERANCE) {
 
     if (ticks > target) {
       esc.writeMicroseconds(1350);   // move negative direction
-    } 
-    else if (ticks < target) {
+    } else {
       esc.writeMicroseconds(1650);   // move positive direction
+    }
+
+    // Stall detection — abort if encoder hasn't moved in MOVE_STALL_MS
+    if (ticks != lastTicks) {
+      lastTicks    = ticks;
+      lastMoveTime = millis();
+    }
+    if (millis() - lastMoveTime > MOVE_STALL_MS) {
+      Serial.println("WARN: moveMotorTo stall detected — aborting");
+      break;
     }
   }
 
