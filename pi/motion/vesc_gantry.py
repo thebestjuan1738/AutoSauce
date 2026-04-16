@@ -34,9 +34,9 @@ VESC_GANTRY_PORT = "COM4"          if sys.platform == "win32" else "/dev/ttyACM0
 VESC_GANTRY_BAUD = 115200
 
 # Map speed 0–100 → duty 0.0–MAX_DUTY.
-MAX_DUTY_GANTRY  = 0.7           # 70% duty ceiling — raise only after verifying mechanics
+MAX_DUTY_GANTRY  = 0.85          # 85% duty ceiling — raise only after verifying mechanics
 # Minimum duty applied even at low speeds — needed to overcome sticky/noisy sections.
-MIN_DUTY_GANTRY  = 0.5           # never go below this when the motor is running
+MIN_DUTY_GANTRY  = 0.65          # never go below this when the motor is running
 # Speed used for move_to() calls (0–100 abstract units).
 # 80 × 0.5 = 0.40 effective duty — enough torque to drive a loaded gantry.
 TRAVEL_SPEED = 80
@@ -62,12 +62,6 @@ STALL_DETECT_S   = 0.6   # seconds of no progress before a kick
 STALL_KICK_DUTY  = MAX_DUTY_GANTRY   # kick at the duty ceiling (0.70)
 STALL_KICK_S     = 0.35  # how long to hold the kick
 STALL_MAX_KICKS  = 3     # give up after this many failed kicks
-
-# Launch kick — applied at the very start of each move to overcome static friction.
-# If the gantry stalls on the first movement then moves once the stall kick fires,
-# increase LAUNCH_KICK_DUTY or LAUNCH_KICK_S until it breaks away cleanly.
-LAUNCH_KICK_DUTY = MAX_DUTY_GANTRY   # duty for the initial breakaway burst
-LAUNCH_KICK_S    = 0.75               # how long to hold the burst (seconds)
 
 # USB VID/PID used to identify the VESC regardless of plug-in order.
 # Run `python -m serial.tools.list_ports -v` to verify your device's VID and PID.
@@ -367,12 +361,6 @@ class VESCGantry:
             "VESCGantry: move_to %dmm  (from %dmm, Δ%+d ticks needed)",
             position_mm, self._position_mm, direction * delta_ticks,
         )
-
-        # Launch kick — brief full-duty burst to break static friction before the
-        # P-controller takes over.  Avoids waiting for stall detection to fire.
-        log.debug("VESCGantry: launch kick duty=%.2f for %.2fs", LAUNCH_KICK_DUTY, LAUNCH_KICK_S)
-        self._ser.write(_packet_set_duty(-direction * LAUNCH_KICK_DUTY))
-        time.sleep(LAUNCH_KICK_S)
 
         deadline        = time.monotonic() + TRAVEL_TIMEOUT_S
         last_tick_time  = time.monotonic()
