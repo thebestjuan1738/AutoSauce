@@ -51,6 +51,12 @@ POSITION_TOLERANCE_TICKS = 7
 # Raise TimeoutError if the gantry doesn't reach the target within this many seconds.
 TRAVEL_TIMEOUT_S = 30
 
+# Stall detection — if tachometer_abs doesn't advance for this long, fire a torque kick.
+STALL_DETECT_S   = 0.6   # seconds of no progress before a kick
+STALL_KICK_DUTY  = MAX_DUTY_GANTRY   # kick at the duty ceiling (0.70)
+STALL_KICK_S     = 0.35  # how long to hold the kick
+STALL_MAX_KICKS  = 3     # give up after this many failed kicks
+
 # USB VID/PID used to identify the VESC regardless of plug-in order.
 # Run `python -m serial.tools.list_ports -v` to verify your device's VID and PID.
 # VESC 4.x / 6.x on STM32 hardware is typically VID=0x0483, PID=0x5740.
@@ -342,9 +348,14 @@ class VESCGantry:
             self.reverse(TRAVEL_SPEED)
 
         deadline = time.monotonic() + TRAVEL_TIMEOUT_S
+        last_tick_time  = time.monotonic()
+        last_ticks_seen = start_ticks
+        kicks           = 0
+
         while True:
             # tachometer_abs always increases — measure distance travelled from start
-            ticks_travelled = abs(self._get_encoder_position() - start_ticks)
+            current_ticks   = self._get_encoder_position()
+            ticks_travelled = abs(current_ticks - start_ticks)
             ticks_remaining = delta_ticks - ticks_travelled
 
             if ticks_remaining <= POSITION_TOLERANCE_TICKS:
@@ -360,6 +371,35 @@ class VESCGantry:
                     f"moving to {position_mm}mm "
                     f"(~{int(ticks_remaining / TICKS_PER_MM)}mm remaining)"
                 )
+
+            # Stall detection — no tachometer progress for STALL_DETECT_S
+            if current_ticks != last_ticks_seen:
+                last_ticks_seen = current_ticks
+                last_tick_time  = time.monotonic()
+            elif time.monotonic() - last_tick_time > STALL_DETECT_S:
+                kicks += 1
+                if kicks > STALL_MAX_KICKS:
+                    self.stop()
+                    actual_mm = int(ticks_travelled / TICKS_PER_MM)
+                    self._position_mm += direction * actual_mm
+                    raise RuntimeError(
+                        f"VESCGantry stalled at ~{self._position_mm}mm after "
+                        f"{STALL_MAX_KICKS} torque kicks — check for obstruction"
+                    )
+                log.warning(
+                    "VESCGantry: stall detected (%d/%d) — torque kick at duty=%.2f",
+                    kicks, STALL_MAX_KICKS, STALL_KICK_DUTY,
+                )
+                # Brief high-duty kick to break through the sticky section
+                kick_duty = STALL_KICK_DUTY if direction > 0 else -STALL_KICK_DUTY
+                self._ser.write(_packet_set_duty(-kick_duty))
+                time.sleep(STALL_KICK_S)
+                # Resume normal travel duty
+                if direction > 0:
+                    self.start(TRAVEL_SPEED)
+                else:
+                    self.reverse(TRAVEL_SPEED)
+                last_tick_time = time.monotonic()  # reset stall clock
 
             time.sleep(0.05)  # poll at 20 Hz
 
