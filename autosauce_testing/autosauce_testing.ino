@@ -181,9 +181,9 @@ void processCommand(String cmd) {
     Serial.println("DONE");
   } 
   else if (cmd == "HOME_EXTRUDER") {
-    // 1300 drives the extruder toward the retracted (home) end-stop.
-    // Dispense then runs at 1700 (positive direction) with room to travel.
-    homeMotor(escExtruder, extruderTicks, 1300);
+    // 1700 retracts the extruder to its home end-stop.
+    // Dispense then drives at 1300 (negative ticks) toward -DISPENSE_TARGET.
+    homeMotor(escExtruder, extruderTicks, 1700);
     Serial.println("DONE");
   }
   else if (cmd.startsWith("MOVE_GRIPPER:")) {

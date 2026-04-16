@@ -10,7 +10,7 @@ from pi.motion.arduino_controller import ArduinoController
 # ─── Motion constants ──────────────────────────────────────────────────────────
 _TICKS_PER_REV         = 753
 _DISPENSE_REVOLUTIONS  = 2.0
-_DISPENSE_TARGET_TICKS = int(_DISPENSE_REVOLUTIONS * _TICKS_PER_REV)   # 1506
+_DISPENSE_TARGET_TICKS = -int(_DISPENSE_REVOLUTIONS * _TICKS_PER_REV)   # -1506 (extends away from home)
 
 
 class GPIOExtruder:
