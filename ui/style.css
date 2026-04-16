@@ -497,44 +497,52 @@ header h1 {
 
 /* -- Debug button bar -------------------------------- */
 .log-debug-bar {
-  display: flex;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  grid-template-rows: auto auto;
   gap: 8px;
-  padding: 8px 16px;
+  padding: 10px 16px 12px;
   border-bottom: 1px solid rgba(255,255,255,0.08);
   flex-shrink: 0;
 }
 
-.log-debug-btn {
-  flex: 1;
-  padding: 6px 8px;
-  border: 1px solid rgba(99,102,241,0.4);
-  background: rgba(99,102,241,0.1);
-  color: #a5b4fc;
-  border-radius: 8px;
-  font-size: 0.72rem;
-  font-weight: 600;
-  letter-spacing: 0.5px;
-  cursor: pointer;
-  transition: background 0.15s, color 0.15s;
-}
-.log-debug-btn:hover {
-  background: rgba(99,102,241,0.25);
-  color: #c4b5fd;
-}
-.log-debug-btn:active {
-  background: rgba(99,102,241,0.4);
-}
+/* Restart button spans full width on its own row */
 .log-debug-btn--danger {
-  border-color: rgba(239,68,68,0.4);
-  background: rgba(239,68,68,0.1);
+  grid-column: 1 / -1;
+  border-color: rgba(239,68,68,0.5);
+  background: rgba(239,68,68,0.12);
   color: #fca5a5;
 }
 .log-debug-btn--danger:hover {
   background: rgba(239,68,68,0.25);
   color: #f87171;
+  border-color: rgba(239,68,68,0.7);
+}
+
+.log-debug-btn {
+  min-height: 42px;
+  padding: 8px 12px;
+  border: 1px solid rgba(99,102,241,0.5);
+  background: rgba(99,102,241,0.12);
+  color: #c4b5fd;
+  border-radius: 10px;
+  font-family: inherit;
+  font-size: 0.82rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+  -webkit-tap-highlight-color: transparent;
+}
+.log-debug-btn:hover {
+  background: rgba(99,102,241,0.25);
+  border-color: rgba(99,102,241,0.75);
+  color: #ddd6fe;
+}
+.log-debug-btn:active {
+  background: rgba(99,102,241,0.4);
 }
 .log-debug-btn:disabled {
-  opacity: 0.5;
+  opacity: 0.45;
   cursor: default;
 }
 

@@ -42,7 +42,7 @@ MIN_DUTY_GANTRY  = 0.5           # never go below this when the motor is running
 TRAVEL_SPEED = 80
 
 # Calibrated: average of runs 2–3 from calibrate_gantry.py (3.56, 3.78 ticks/mm).
-TICKS_PER_MM = 3.67               # encoder ticks per mm of belt travel
+TICKS_PER_MM = 3.672               # encoder ticks per mm of belt travel
 
 # How close (in ticks) counts as "arrived".
 # 3.67 × 2 ≈ 7 ticks = ±1.9 mm
@@ -401,7 +401,7 @@ class VESCGantry:
                     self.reverse(TRAVEL_SPEED)
                 last_tick_time = time.monotonic()  # reset stall clock
 
-            time.sleep(0.05)  # poll at 20 Hz
+            time.sleep(0.05)  # poll at 2 0 Hz
 
         self.stop()
         self._position_mm = position_mm
