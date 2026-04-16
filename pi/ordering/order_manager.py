@@ -10,14 +10,15 @@ Order lifecycle:
 
 Motion sequence per order:
     1.  Gantry → dock
-    2.  Gripper close
+    2.  Gripper close (grab bottle)
     3.  Gantry → dispense
-    4.  Conveyor + extruder + gantry dispense sweep start simultaneously
-    5.  Extruder finishes; sweep stops at current position
+    4.  Conveyor + extruder + gantry dispense sweep simultaneously
+    5.  Extruder finishes; sweep stops
     6.  Conveyor finishes (longer duration)
-    7.  Gantry → dock
-    8.  Gripper open
-    9.  Gantry → home
+    7.  Extruder retract
+    8.  Gantry → home
+    9.  Gantry → dock
+    10. Gripper open (return bottle)
 
 The UI calls submit_order() and polls get_status() — that's the entire
 public interface. Nothing else in this file is meant to be called directly.
@@ -139,7 +140,7 @@ class OrderManager:
 
     def _run_sequence(self, profile: dict) -> None:
         """
-        The motion sequence. Steps are numbered to match the docstring above.
+        The motion sequence. Steps are numbered to match the class docstring.
         Each step blocks until complete before moving to the next,
         except steps 4/5 where conveyor and extruder run concurrently.
         """
@@ -179,20 +180,20 @@ class OrderManager:
         stop_sweep.set()
         sweep_thread.join()                              # finishes current move
         conveyor_thread.join()                           # wait for belt to finish
-        log.info("Step 6: conveyor + sweep done")
+        log.info("Step 6+7: conveyor + sweep done")
         self._extruder.retract()                         # retract plunger after belt clears
 
-        # 7. Return to dock
-        log.info("Step 7: gantry → dock")
+        # 8. Return to home first (safe resting position)
+        log.info("Step 8: gantry → home")
+        self._gantry.move_to(POSITIONS["home"])
+
+        # 9. Travel to dock to return the bottle
+        log.info("Step 9: gantry → dock")
         self._gantry.move_to(POSITIONS["dock"])
 
-        # 8. Open gripper — return sauce dispenser to dock
-        log.info("Step 8: gripper open")
+        # 10. Open gripper — release sauce dispenser at dock
+        log.info("Step 10: gripper open")
         self._gripper.open()
-
-        # 9. Return to home
-        log.info("Step 9: gantry → home")
-        self._gantry.move_to(POSITIONS["home"])
 
     def _run_conveyor(self, speed: int, duration_ms: int) -> None:
         """Runs on its own thread — forward for first half, reverse for second half."""
