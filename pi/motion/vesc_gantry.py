@@ -40,9 +40,9 @@ MIN_DUTY_GANTRY  = 0.5           # never go below this when the motor is running
 # Duty ceiling used during the dispense sweep so the gantry moves slowly
 # while sauce is being applied.  Must be >= MIN_DUTY_GANTRY or the motor
 # won't turn and the stall kick will fire at full duty instead.
-# 0.52 = just 4% above the minimum — slowest reliable continuous motion.
-# If this is still too fast, increase ACCEL_RAMP_S to stretch the ramp further.
-SWEEP_MAX_DUTY   = 0.52
+# 0.51 = just 2% above the minimum — slowest reliable continuous motion.
+# The accel ramp starts at MIN_DUTY (not 0), so no stall kick fires on sweep start.
+SWEEP_MAX_DUTY   = 0.51
 # Speed used for move_to() calls (0–100 abstract units).
 # 80 × 0.5 = 0.40 effective duty — enough torque to drive a loaded gantry.
 TRAVEL_SPEED = 80
@@ -396,10 +396,12 @@ class VESCGantry:
                 )
 
             # ── Accel (time) + decel (position) ramp ─────────────────────
-            # time_factor ramps 0→1 over ACCEL_RAMP_S so torque builds gradually
-            # instead of jumping from 0 to MIN_DUTY instantly.
+            # Ramp from MIN_DUTY → p_duty over ACCEL_RAMP_S.
+            # Starting from MIN_DUTY (not 0) means the motor moves immediately,
+            # so position tracking is never lost to a zero-duty stall at move start.
             time_factor = min(1.0, (time.monotonic() - move_start) / ACCEL_RAMP_S)
-            duty = self._p_duty(ticks_remaining, delta_ticks, max_duty) * time_factor
+            p_duty = self._p_duty(ticks_remaining, delta_ticks, max_duty)
+            duty = MIN_DUTY_GANTRY + time_factor * (p_duty - MIN_DUTY_GANTRY)
             self._ser.write(_packet_set_duty(-direction * duty))
 
             # Stall detection — no tachometer progress for STALL_DETECT_S

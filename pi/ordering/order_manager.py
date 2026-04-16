@@ -15,11 +15,10 @@ Motion sequence per order:
     4.  Extruder: MEET_PLUNGER — drive until pad contact confirmed (blocking)
     5.  Conveyor + extruder DISPENSE_SAUCE + slow gantry sweep simultaneously
     6.  Extruder finishes; conveyor finishes
-    7.  Extruder retract
-    8.  Gantry → home
-    9.  Gantry → dock
-    10. Gripper open (return bottle)
-    11. Gantry → home
+    7.  Extruder retract + Gantry → home (simultaneous)
+    8.  Gantry → dock
+    9.  Gripper open (return bottle)
+    10. Gantry → home
 
 The UI calls submit_order() and polls get_status() — that's the entire
 public interface. Nothing else in this file is meant to be called directly.
@@ -185,22 +184,25 @@ class OrderManager:
         sweep_thread.join()                              # finishes current move
         conveyor_thread.join()                           # wait for belt to finish
         log.info("Step 6+7: conveyor + sweep done")
-        self._extruder.retract()                         # retract plunger after belt clears
 
-        # 8. Return to home first (safe resting position)
-        log.info("Step 8: gantry → home")
+        # 7+8. Retract extruder while gantry moves home — safe to overlap since the
+        # extruder retracts vertically while the gantry travels laterally.
+        log.info("Step 7+8: extruder retract + gantry → home (simultaneous)")
+        retract_thread = threading.Thread(target=self._extruder.retract, daemon=True)
+        retract_thread.start()
         self._gantry.move_to(POSITIONS["home"])
+        retract_thread.join()
 
-        # 9. Travel to dock to return the bottle
-        log.info("Step 9: gantry → dock")
+        # 8. Travel to dock to return the bottle
+        log.info("Step 8: gantry → dock")
         self._gantry.move_to(POSITIONS["dock"])
 
-        # 10. Open gripper — release sauce dispenser at dock
-        log.info("Step 10: gripper open")
+        # 9. Open gripper — release sauce dispenser at dock
+        log.info("Step 9: gripper open")
         self._gripper.open()
 
-        # 11. Return to home — resting position ready for next order
-        log.info("Step 11: gantry → home")
+        # 10. Return to home — resting position ready for next order
+        log.info("Step 10: gantry → home")
         self._gantry.move_to(POSITIONS["home"])
 
     def _run_conveyor(self, speed: int, duration_ms: int) -> None:
