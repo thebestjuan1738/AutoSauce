@@ -34,16 +34,12 @@ VESC_GANTRY_PORT = "COM4"          if sys.platform == "win32" else "/dev/ttyACM0
 VESC_GANTRY_BAUD = 115200
 
 # Map speed 0–100 → duty 0.0–MAX_DUTY.
-MAX_DUTY_GANTRY  = 0.85          # cruise/kick duty ceiling
-# Minimum duty applied at the bottom of the decel ramp.
-MIN_DUTY_GANTRY  = 0.65          # never go below this when the motor is running
+MAX_DUTY_GANTRY  = 0.7           # 70% duty ceiling — raise only after verifying mechanics
+# Minimum duty applied even at low speeds — needed to overcome sticky/noisy sections.
+MIN_DUTY_GANTRY  = 0.5           # never go below this when the motor is running
 # Speed used for move_to() calls (0–100 abstract units).
+# 80 × 0.5 = 0.40 effective duty — enough torque to drive a loaded gantry.
 TRAVEL_SPEED = 80
-
-# Startup burst — applied at the very beginning of every move to overcome static friction.
-# Full STARTUP_DUTY is held for STARTUP_S seconds before handing off to the P ramp.
-STARTUP_DUTY = 0.9               # briefly above MAX to break static friction
-STARTUP_S    = 0.25              # seconds to hold the startup burst
 
 # Calibrated: average of runs 2–3 from calibrate_gantry.py (3.56, 3.78 ticks/mm).
 TICKS_PER_MM = 3.67               # encoder ticks per mm of belt travel
@@ -365,11 +361,6 @@ class VESCGantry:
             "VESCGantry: move_to %dmm  (from %dmm, Δ%+d ticks needed)",
             position_mm, self._position_mm, direction * delta_ticks,
         )
-
-        # ── Startup burst — overcome static friction before P ramp takes over ──
-        log.info("VESCGantry: startup burst duty=%.2f for %.2fs", STARTUP_DUTY, STARTUP_S)
-        self._ser.write(_packet_set_duty(-direction * STARTUP_DUTY))
-        time.sleep(STARTUP_S)
 
         deadline        = time.monotonic() + TRAVEL_TIMEOUT_S
         last_tick_time  = time.monotonic()
