@@ -112,15 +112,15 @@ void moveMotorTo(Servo &esc, volatile long &ticks, long target) {
 
   long lastTicks             = ticks;
   unsigned long startTime    = millis();
-  unsigned long lastMoveTime = 0;   // 0 = not yet moving
+  unsigned long lastMoveTime = 0;
   bool started               = false;
 
   while (abs(ticks - target) > MOVE_TOLERANCE) {
 
     if (ticks > target) {
-      esc.writeMicroseconds(1300);   // move negative direction
+      esc.writeMicroseconds(1300);
     } else {
-      esc.writeMicroseconds(1700);   // move positive direction
+      esc.writeMicroseconds(1700);
     }
 
     if (ticks != lastTicks) {
@@ -130,13 +130,11 @@ void moveMotorTo(Servo &esc, volatile long &ticks, long target) {
     }
 
     if (!started) {
-      // Still waiting for first tick — apply startup timeout
       if (millis() - startTime > MOVE_START_MS) {
         Serial.println("WARN: moveMotorTo motor did not start — aborting");
         break;
       }
     } else {
-      // Moving — apply stall timeout between ticks
       if (millis() - lastMoveTime > MOVE_STALL_MS) {
         Serial.println("WARN: moveMotorTo stall detected — aborting");
         break;
@@ -144,7 +142,7 @@ void moveMotorTo(Servo &esc, volatile long &ticks, long target) {
     }
   }
 
-  esc.writeMicroseconds(1500);  // stop
+  esc.writeMicroseconds(1500);
   delay(150);
 }
 

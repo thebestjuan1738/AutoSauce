@@ -234,3 +234,43 @@ def debug_restart():
         subprocess.run(["sudo", "systemctl", "restart", "sauce-backend"], check=False)
     threading.Thread(target=_do_restart, daemon=True).start()
     return {"success": True, "message": "Restarting..."}
+
+
+# ─── Manual control endpoints ─────────────────────────────────────────────────
+
+def _manual(command: str, timeout: float = 20.0):
+    """Send a single Arduino command and return success/failure."""
+    try:
+        arduino = ArduinoController()
+        if not arduino.send_command(command, timeout=timeout):
+            raise RuntimeError(f"{command} timed out")
+        log.info(f"Manual: {command} complete")
+        return {"success": True}
+    except Exception as e:
+        log.error(f"Manual {command} failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/manual/home-grabber")
+def manual_home_grabber():
+    return _manual("HOME_GRIPPER")
+
+@app.post("/api/manual/home-extruder")
+def manual_home_extruder():
+    return _manual("HOME_EXTRUDER")
+
+@app.post("/api/manual/close-grabber")
+def manual_close_grabber():
+    return _manual("CLOSE_GRABBER")
+
+@app.post("/api/manual/open-grabber")
+def manual_open_grabber():
+    return _manual("OPEN_GRABBER")
+
+@app.post("/api/manual/open-extruder")
+def manual_open_extruder():
+    return _manual("OPEN_EXTRUDER")
+
+@app.post("/api/manual/meet-plunger")
+def manual_meet_plunger():
+    return _manual("MEET_PLUNGER", timeout=45.0)

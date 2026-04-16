@@ -354,9 +354,13 @@ logRefreshBtn.addEventListener('click', fetchLogs);
    Debug buttons
 ----------------------------------------------- */
 
-const debugGripperBtn  = document.getElementById('debug-gripper-btn');
-const debugExtruderBtn = document.getElementById('debug-extruder-btn');
-const debugRestartBtn  = document.getElementById('debug-restart-btn');
+const debugHomeGrabberBtn  = document.getElementById('debug-home-grabber-btn');
+const debugHomeExtruderBtn = document.getElementById('debug-home-extruder-btn');
+const debugCloseGrabberBtn = document.getElementById('debug-close-grabber-btn');
+const debugOpenGrabberBtn  = document.getElementById('debug-open-grabber-btn');
+const debugOpenExtruderBtn = document.getElementById('debug-open-extruder-btn');
+const debugMeetPlungerBtn  = document.getElementById('debug-meet-plunger-btn');
+const debugRestartBtn      = document.getElementById('debug-restart-btn');
 
 async function debugAction(endpoint, btn, workingLabel) {
   const original = btn.textContent;
@@ -378,6 +382,10 @@ async function debugAction(endpoint, btn, workingLabel) {
   }
 }
 
-debugGripperBtn.addEventListener('click',  () => debugAction('/api/debug/test-gripper',  debugGripperBtn,  'Testing...'));
-debugExtruderBtn.addEventListener('click', () => debugAction('/api/debug/test-extruder', debugExtruderBtn, 'Testing...'));
-debugRestartBtn.addEventListener('click',  () => debugAction('/api/debug/restart',        debugRestartBtn,  'Restarting...'));
+debugHomeGrabberBtn.addEventListener('click',  () => debugAction('/api/manual/home-grabber',  debugHomeGrabberBtn,  'Running...'));
+debugHomeExtruderBtn.addEventListener('click', () => debugAction('/api/manual/home-extruder', debugHomeExtruderBtn, 'Running...'));
+debugCloseGrabberBtn.addEventListener('click', () => debugAction('/api/manual/close-grabber', debugCloseGrabberBtn, 'Running...'));
+debugOpenGrabberBtn.addEventListener('click',  () => debugAction('/api/manual/open-grabber',  debugOpenGrabberBtn,  'Running...'));
+debugOpenExtruderBtn.addEventListener('click', () => debugAction('/api/manual/open-extruder', debugOpenExtruderBtn, 'Running...'));
+debugMeetPlungerBtn.addEventListener('click',  () => debugAction('/api/manual/meet-plunger',  debugMeetPlungerBtn,  'Running...'));
+debugRestartBtn.addEventListener('click',      () => debugAction('/api/debug/restart',         debugRestartBtn,      'Restarting...'));

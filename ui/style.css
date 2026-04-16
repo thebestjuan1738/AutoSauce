@@ -498,8 +498,8 @@ header h1 {
 /* -- Debug button bar -------------------------------- */
 .log-debug-bar {
   display: grid;
-  grid-template-columns: 1fr 1fr;
-  grid-template-rows: auto auto;
+  grid-template-columns: 1fr 1fr 1fr;
+  grid-template-rows: auto auto auto;
   gap: 8px;
   padding: 10px 16px 12px;
   border-bottom: 1px solid rgba(255,255,255,0.08);
