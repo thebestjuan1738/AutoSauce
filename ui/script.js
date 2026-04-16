@@ -349,3 +349,35 @@ logRefreshBtn.addEventListener('click', fetchLogs);
   }, { passive: true });
 
 }(logList));
+
+/* -----------------------------------------------
+   Debug buttons
+----------------------------------------------- */
+
+const debugGripperBtn  = document.getElementById('debug-gripper-btn');
+const debugExtruderBtn = document.getElementById('debug-extruder-btn');
+const debugRestartBtn  = document.getElementById('debug-restart-btn');
+
+async function debugAction(endpoint, btn, workingLabel) {
+  const original = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = workingLabel;
+  try {
+    const res = await fetch(`${API_BASE}${endpoint}`, { method: 'POST' });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);
+    btn.textContent = 'Done!';
+  } catch (err) {
+    btn.textContent = 'Error';
+    console.warn(`[SauceBot] ${endpoint} failed:`, err.message);
+  } finally {
+    setTimeout(() => {
+      btn.textContent = original;
+      btn.disabled = false;
+    }, 2000);
+  }
+}
+
+debugGripperBtn.addEventListener('click',  () => debugAction('/api/debug/test-gripper',  debugGripperBtn,  'Testing...'));
+debugExtruderBtn.addEventListener('click', () => debugAction('/api/debug/test-extruder', debugExtruderBtn, 'Testing...'));
+debugRestartBtn.addEventListener('click',  () => debugAction('/api/debug/restart',        debugRestartBtn,  'Restarting...'));

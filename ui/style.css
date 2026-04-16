@@ -495,6 +495,49 @@ header h1 {
   background: rgba(165,180,252,0.1);
 }
 
+/* -- Debug button bar -------------------------------- */
+.log-debug-bar {
+  display: flex;
+  gap: 8px;
+  padding: 8px 16px;
+  border-bottom: 1px solid rgba(255,255,255,0.08);
+  flex-shrink: 0;
+}
+
+.log-debug-btn {
+  flex: 1;
+  padding: 6px 8px;
+  border: 1px solid rgba(99,102,241,0.4);
+  background: rgba(99,102,241,0.1);
+  color: #a5b4fc;
+  border-radius: 8px;
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+.log-debug-btn:hover {
+  background: rgba(99,102,241,0.25);
+  color: #c4b5fd;
+}
+.log-debug-btn:active {
+  background: rgba(99,102,241,0.4);
+}
+.log-debug-btn--danger {
+  border-color: rgba(239,68,68,0.4);
+  background: rgba(239,68,68,0.1);
+  color: #fca5a5;
+}
+.log-debug-btn--danger:hover {
+  background: rgba(239,68,68,0.25);
+  color: #f87171;
+}
+.log-debug-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
 /* -- Log list ---------------------------------------- */
 .log-list {
   list-style: none;

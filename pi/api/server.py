@@ -16,6 +16,7 @@ This server talks to order_manager directly as a Python function call.
 """
 
 import os
+import subprocess
 import threading
 import time
 
@@ -29,6 +30,7 @@ from pydantic import BaseModel
 from pi.ordering.order_manager import OrderManager, OrderStatus
 from pi.ordering.sauce_config import get_coverage_levels
 from pi.utils.logger import log, get_recent_logs
+from pi.motion.arduino_controller import ArduinoController
 
 # ─── App ──────────────────────────────────────────────────────────────────────
 
@@ -184,3 +186,50 @@ def get_logs():
 def health():
     """Simple health check — useful during development."""
     return {"status": "ok"}
+
+
+# ─── Debug endpoints ──────────────────────────────────────────────────────────
+
+_TEST_GRIPPER_TICKS = -200   # slight close (~0.27 rev), vs full close -2072
+_TEST_EXTRUDER_TICKS = -200  # slight extend (~0.27 rev), vs full dispense -1506
+
+
+@app.post("/api/debug/test-gripper")
+def debug_test_gripper():
+    """Fires the gripper slightly — closes a bit then returns to open."""
+    try:
+        arduino = ArduinoController()
+        if not arduino.send_command(f"MOVE_GRIPPER:{_TEST_GRIPPER_TICKS}", timeout=10.0):
+            raise RuntimeError("MOVE_GRIPPER command timed out")
+        if not arduino.send_command("MOVE_GRIPPER:0", timeout=10.0):
+            raise RuntimeError("MOVE_GRIPPER:0 (open) timed out")
+        log.info("Debug: gripper test complete")
+        return {"success": True}
+    except Exception as e:
+        log.error(f"Debug gripper test failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/debug/test-extruder")
+def debug_test_extruder():
+    """Fires the extruder slightly — extends a bit then retracts."""
+    try:
+        arduino = ArduinoController()
+        if not arduino.send_command(f"MOVE_EXTRUDER:{_TEST_EXTRUDER_TICKS}", timeout=10.0):
+            raise RuntimeError("MOVE_EXTRUDER command timed out")
+        if not arduino.send_command("MOVE_EXTRUDER:0", timeout=10.0):
+            raise RuntimeError("MOVE_EXTRUDER:0 (retract) timed out")
+        log.info("Debug: extruder test complete")
+        return {"success": True}
+    except Exception as e:
+        log.error(f"Debug extruder test failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/debug/restart")
+def debug_restart():
+    """Restarts the sauce-backend systemd service."""
+    def _do_restart():
+        subprocess.run(["sudo", "systemctl", "restart", "sauce-backend"], check=False)
+    threading.Thread(target=_do_restart, daemon=True).start()
+    return {"success": True, "message": "Restarting..."}
