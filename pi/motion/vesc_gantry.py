@@ -38,8 +38,11 @@ MAX_DUTY_GANTRY  = 0.7           # 70% duty ceiling — raise only after verifyi
 # Minimum duty applied even at low speeds — needed to overcome sticky/noisy sections.
 MIN_DUTY_GANTRY  = 0.5           # never go below this when the motor is running
 # Duty ceiling used during the dispense sweep so the gantry moves slowly
-# while sauce is being applied.  Raise if the gantry stalls mid-sweep.
-SWEEP_MAX_DUTY   = 0.35
+# while sauce is being applied.  Must be >= MIN_DUTY_GANTRY or the motor
+# won't turn and the stall kick will fire at full duty instead.
+# 0.52 = just 4% above the minimum — slowest reliable continuous motion.
+# If this is still too fast, increase ACCEL_RAMP_S to stretch the ramp further.
+SWEEP_MAX_DUTY   = 0.52
 # Speed used for move_to() calls (0–100 abstract units).
 # 80 × 0.5 = 0.40 effective duty — enough torque to drive a loaded gantry.
 TRAVEL_SPEED = 80

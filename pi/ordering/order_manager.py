@@ -19,6 +19,7 @@ Motion sequence per order:
     8.  Gantry → home
     9.  Gantry → dock
     10. Gripper open (return bottle)
+    11. Gantry → home
 
 The UI calls submit_order() and polls get_status() — that's the entire
 public interface. Nothing else in this file is meant to be called directly.
@@ -197,6 +198,10 @@ class OrderManager:
         # 10. Open gripper — release sauce dispenser at dock
         log.info("Step 10: gripper open")
         self._gripper.open()
+
+        # 11. Return to home — resting position ready for next order
+        log.info("Step 11: gantry → home")
+        self._gantry.move_to(POSITIONS["home"])
 
     def _run_conveyor(self, speed: int, duration_ms: int) -> None:
         """Runs on its own thread — forward for first half, reverse for second half."""
