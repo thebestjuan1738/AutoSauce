@@ -33,6 +33,7 @@ volatile long extruderTicks = 0;
 //
 const long TICKS_PER_REV      = 753;
 const long TICKS_PAST_CONTACT = 376;  // ticks to advance past plunger contact (~0.5 rev); tune as needed
+const long MAX_EXTENSION_TICKS = (long)(2.5 * 753);  // hard travel limit (~2.5 rev); tune as needed
 
 //
 // ====== QUADRATURE ISR: GRABBER ======
@@ -194,6 +195,11 @@ void open_extruder() {
 void meet_plunger() {
   Serial.println("Phase 1: moving until plunger contact...");
   while (digitalRead(plungerPin) == HIGH) {
+    if (extruderTicks <= -MAX_EXTENSION_TICKS) {
+      escExtruder.writeMicroseconds(1500);
+      Serial.println("WARN: meet_plunger reached extension limit — no contact detected. Aborting.");
+      return;
+    }
     escExtruder.writeMicroseconds(1350);  // closing/extending direction
   }
   escExtruder.writeMicroseconds(1500);
