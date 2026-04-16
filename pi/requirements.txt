@@ -4,4 +4,6 @@ pydantic
 pyserial
 gpiozero; sys_platform == "linux"
 lgpio; sys_platform == "linux"
-pyvesc
+# pyvesc and PyCRC omitted — pip install is unreliable for these packages.
+# Install manually on the Pi: pip install PyCRC pyvesc
+# The server starts and runs without them; only gantry moves will fail if missing.

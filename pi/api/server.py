@@ -288,8 +288,8 @@ def manual_move_gantry(location: str):
     if location not in POSITIONS:
         raise HTTPException(status_code=400, detail=f"Unknown location '{location}'. Valid: {list(POSITIONS.keys())}")
     try:
-        from pi.motion.gantry import GPIOGantry
-        GPIOGantry().move_to(POSITIONS[location])
+        from pi.motion.vesc_gantry import VESCGantry
+        VESCGantry().move_to(POSITIONS[location])
         log.info(f"Manual: gantry moved to '{location}' ({POSITIONS[location]} mm)")
         return {"success": True}
     except Exception as e:
