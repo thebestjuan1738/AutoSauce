@@ -32,7 +32,7 @@ from pi.ordering.sauce_config import get_coverage_levels, POSITIONS
 from pi.utils.logger import log, get_recent_logs
 from pi.motion.arduino_controller import ArduinoController
 from pi.motion.gripper import GPIOGripper, _CLOSE_TARGET_TICKS as _GRIPPER_CLOSE_TICKS
-from pi.motion.gantry import GPIOGantry
+# GPIOGantry is imported lazily inside the endpoint to avoid crashing if pyvesc is missing
 
 # ─── App ──────────────────────────────────────────────────────────────────────
 
@@ -288,6 +288,7 @@ def manual_move_gantry(location: str):
     if location not in POSITIONS:
         raise HTTPException(status_code=400, detail=f"Unknown location '{location}'. Valid: {list(POSITIONS.keys())}")
     try:
+        from pi.motion.gantry import GPIOGantry
         GPIOGantry().move_to(POSITIONS[location])
         log.info(f"Manual: gantry moved to '{location}' ({POSITIONS[location]} mm)")
         return {"success": True}
