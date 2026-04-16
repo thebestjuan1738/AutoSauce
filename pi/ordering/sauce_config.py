@@ -24,10 +24,12 @@ POSITIONS = {
     "dispense": 100,    # over the conveyor belt / sandwich
 }
 
-# Gantry zigzag amplitude during dispense (mm either side of the dispense position).
-# Gantry oscillates between dispense-ZIGZAG_AMPLITUDE_MM and dispense+ZIGZAG_AMPLITUDE_MM
-# while the extruder is running for even sauce coverage.
-ZIGZAG_AMPLITUDE_MM = 7
+# Gantry sweep path during dispense.
+# While the extruder is running the gantry travels from DISPENSE_SWEEP_START_MM
+# to DISPENSE_SWEEP_END_MM for even sauce coverage across the full sandwich length.
+# Set both to the same value to disable sweeping.
+DISPENSE_SWEEP_START_MM = 50
+DISPENSE_SWEEP_END_MM   = 150
 
 # ─── Gripper (encoder-based, no timing config needed) ────────────────────────
 # Tune _CLOSE_TARGET_TICKS in pi/motion/gripper.py if grip depth needs adjusting.
