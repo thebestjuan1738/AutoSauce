@@ -21,7 +21,7 @@ Scaling to multiple sauces later:
 POSITIONS = {
     "dock":     200,    # where the sauce dispenser sits when not in use
     "home":     -10,      # resting position between orders (home end of rail)
-    "dispense": 50,    # over the conveyor belt / sandwich
+    "dispense": 20,    # over the conveyor belt / sandwich
 }
 
 # Gantry sweep path during dispense.
@@ -29,7 +29,7 @@ POSITIONS = {
 # to DISPENSE_SWEEP_END_MM for even sauce coverage across the full sandwich length.
 # Set both to the same value to disable sweeping.
 DISPENSE_SWEEP_START_MM = 0
-DISPENSE_SWEEP_END_MM   = 50
+DISPENSE_SWEEP_END_MM   = 30
 
 # ─── Gripper (encoder-based, no timing config needed) ────────────────────────
 # Tune _CLOSE_TARGET_TICKS in pi/motion/gripper.py if grip depth needs adjusting.
