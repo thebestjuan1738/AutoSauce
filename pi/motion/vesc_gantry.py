@@ -37,6 +37,9 @@ VESC_GANTRY_BAUD = 115200
 MAX_DUTY_GANTRY  = 0.7           # 70% duty ceiling — raise only after verifying mechanics
 # Minimum duty applied even at low speeds — needed to overcome sticky/noisy sections.
 MIN_DUTY_GANTRY  = 0.5           # never go below this when the motor is running
+# Duty ceiling used during the dispense sweep so the gantry moves slowly
+# while sauce is being applied.  Raise if the gantry stalls mid-sweep.
+SWEEP_MAX_DUTY   = 0.35
 # Speed used for move_to() calls (0–100 abstract units).
 # 80 × 0.5 = 0.40 effective duty — enough torque to drive a loaded gantry.
 TRAVEL_SPEED = 80
@@ -329,24 +332,24 @@ class VESCGantry:
         print(f"    TICKS_PER_MM = {delta} / <actual_mm_travelled>")
         print(f"    POSITION_TOLERANCE_TICKS = round(TICKS_PER_MM * 2)  # ±2 mm")
 
-    def _p_duty(self, ticks_remaining: int, delta_ticks: int) -> float:
+    def _p_duty(self, ticks_remaining: int, delta_ticks: int, max_duty: float = MAX_DUTY_GANTRY) -> float:
         """
-        Decel ramp: full duty during cruise, tapers to MIN_DUTY over the last
+        Decel ramp: cruise at max_duty then taper to MIN_DUTY over the last
         DECEL_ZONE_MM.  Short moves use the full delta as the zone so they
-        don't stall on small hops.
+        don't stall on small hops.  Pass max_duty=SWEEP_MAX_DUTY for slow travel.
         """
         decel_zone_ticks = int(DECEL_ZONE_MM * TICKS_PER_MM)
         effective_zone   = min(decel_zone_ticks, delta_ticks) or 1
         if ticks_remaining >= effective_zone:
-            return MAX_DUTY_GANTRY
+            return max_duty
         ramp = ticks_remaining / effective_zone          # 1.0 → 0.0 as target approaches
-        return MIN_DUTY_GANTRY + ramp * (MAX_DUTY_GANTRY - MIN_DUTY_GANTRY)
+        return MIN_DUTY_GANTRY + ramp * (max_duty - MIN_DUTY_GANTRY)
 
-    def move_to(self, position_mm: int) -> None:
+    def move_to(self, position_mm: int, max_duty: float = MAX_DUTY_GANTRY) -> None:
         """
         Closed-loop move to position_mm (from the dock end of the rail).
-        Drives at TRAVEL_SPEED and polls tachometer_abs at 20 Hz until the
-        target tick count is reached within POSITION_TOLERANCE_TICKS.
+        Polls tachometer_abs at 20 Hz until within POSITION_TOLERANCE_TICKS.
+        Pass max_duty=SWEEP_MAX_DUTY for a slow dispense sweep.
 
         Calibrate TICKS_PER_MM at the top of this file — see module docstring.
         """
@@ -393,7 +396,7 @@ class VESCGantry:
             # time_factor ramps 0→1 over ACCEL_RAMP_S so torque builds gradually
             # instead of jumping from 0 to MIN_DUTY instantly.
             time_factor = min(1.0, (time.monotonic() - move_start) / ACCEL_RAMP_S)
-            duty = self._p_duty(ticks_remaining, delta_ticks) * time_factor
+            duty = self._p_duty(ticks_remaining, delta_ticks, max_duty) * time_factor
             self._ser.write(_packet_set_duty(-direction * duty))
 
             # Stall detection — no tachometer progress for STALL_DETECT_S

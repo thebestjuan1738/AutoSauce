@@ -12,9 +12,9 @@ Motion sequence per order:
     1.  Gantry → dock
     2.  Gripper close (grab bottle)
     3.  Gantry → dispense
-    4.  Conveyor + extruder + gantry dispense sweep simultaneously
-    5.  Extruder finishes; sweep stops
-    6.  Conveyor finishes (longer duration)
+    4.  Extruder: MEET_PLUNGER — drive until pad contact confirmed (blocking)
+    5.  Conveyor + extruder DISPENSE_SAUCE + slow gantry sweep simultaneously
+    6.  Extruder finishes; conveyor finishes
     7.  Extruder retract
     8.  Gantry → home
     9.  Gantry → dock
@@ -32,6 +32,7 @@ from enum import Enum, auto
 from typing import Optional
 
 from pi.ordering.sauce_config import get_profile, POSITIONS, DISPENSE_SWEEP_END_MM
+from pi.motion.vesc_gantry import SWEEP_MAX_DUTY
 from pi.utils.logger import log
 
 
@@ -156,13 +157,15 @@ class OrderManager:
         log.info("Step 3: gantry → dispense")
         self._gantry.move_to(POSITIONS["dispense"])
 
-        # 4+5. Conveyor, extruder, and gantry sweep run simultaneously.
-        # Gantry travels from DISPENSE_SWEEP_START_MM to DISPENSE_SWEEP_END_MM
-        # while the extruder is running for even sauce coverage across the sandwich.
-        # Extruder blocks this thread; when it finishes the stop event is set
-        # and the sweep thread completes its current move then stops.
-        # Conveyor is joined before retract.
-        log.info("Step 4+5: conveyor + extruder + dispense sweep start")
+        # 4. Wait for extruder to make contact with the pad before moving.
+        log.info("Step 4: extruder → meet plunger")
+        self._extruder.meet_plunger()
+
+        # 5+6. Conveyor, extruder dispense, and slow gantry sweep simultaneously.
+        # Contact is already confirmed — extruder now pushes the fixed dispense amount
+        # while the gantry sweeps slowly for even coverage.
+        # Extruder blocks this thread; conveyor and sweep threads are joined after.
+        log.info("Step 5+6: conveyor + extruder dispense + slow gantry sweep")
         stop_sweep = threading.Event()
         conveyor_thread = threading.Thread(
             target=self._run_conveyor,
@@ -208,10 +211,11 @@ class OrderManager:
 
     def _run_dispense_sweep(self, stop: threading.Event) -> None:
         """
-        Single clean sweep from the current dispense position to
-        DISPENSE_SWEEP_END_MM while the extruder runs.
+        Single slow sweep from the current dispense position to
+        DISPENSE_SWEEP_END_MM while the extruder dispenses.
+        Uses SWEEP_MAX_DUTY so the gantry moves slowly for even sauce coverage.
         """
-        self._gantry.move_to(DISPENSE_SWEEP_END_MM)
+        self._gantry.move_to(DISPENSE_SWEEP_END_MM, max_duty=SWEEP_MAX_DUTY)
         log.info("Dispense sweep: complete at %dmm", DISPENSE_SWEEP_END_MM)
 
     def _safe_abort(self) -> None:

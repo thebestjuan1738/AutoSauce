@@ -23,7 +23,7 @@ class MockGantry:
     def __init__(self):
         self._position = 500   # starts at home
 
-    def move_to(self, position_mm: int) -> None:
+    def move_to(self, position_mm: int, max_duty: float = None) -> None:
         log.info(f"  [MOCK] Gantry: {self._position}mm → {position_mm}mm")
         time.sleep(0.2)        # simulate travel time
         self._position = position_mm
@@ -47,6 +47,11 @@ class MockGripper:
 class MockExtruder:
     def home(self) -> None:
         log.info("  [MOCK] Extruder: homing")
+
+    def meet_plunger(self) -> None:
+        log.info("  [MOCK] Extruder: meeting plunger (contact)")
+        time.sleep(1.5)
+        log.info("  [MOCK] Extruder: plunger contact confirmed")
 
     def dispense(self) -> None:
         log.info("  [MOCK] Extruder: dispensing")
