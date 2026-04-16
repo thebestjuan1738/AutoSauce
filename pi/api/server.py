@@ -31,6 +31,7 @@ from pi.ordering.order_manager import OrderManager, OrderStatus
 from pi.ordering.sauce_config import get_coverage_levels
 from pi.utils.logger import log, get_recent_logs
 from pi.motion.arduino_controller import ArduinoController
+from pi.motion.gripper import _CLOSE_TARGET_TICKS as _GRIPPER_CLOSE_TICKS
 
 # ─── App ──────────────────────────────────────────────────────────────────────
 
@@ -189,10 +190,6 @@ def health():
 
 
 # ─── Debug endpoints ──────────────────────────────────────────────────────────
-
-# Match the full-travel targets from gripper.py and extruder.py
-_GRIPPER_CLOSE_TICKS  = -int(2.75 * 753)   # -2070
-_EXTRUDER_DISPENSE_TICKS = -int(2.0 * 753)  # -1506
 
 
 @app.post("/api/debug/test-gripper")
