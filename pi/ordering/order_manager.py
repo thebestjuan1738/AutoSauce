@@ -30,7 +30,7 @@ from dataclasses import dataclass, field
 from enum import Enum, auto
 from typing import Optional
 
-from pi.ordering.sauce_config import get_profile, POSITIONS, DISPENSE_SWEEP_START_MM, DISPENSE_SWEEP_END_MM
+from pi.ordering.sauce_config import get_profile, POSITIONS, DISPENSE_SWEEP_END_MM
 from pi.utils.logger import log
 
 
@@ -207,16 +207,11 @@ class OrderManager:
 
     def _run_dispense_sweep(self, stop: threading.Event) -> None:
         """
-        Sweep the gantry from DISPENSE_SWEEP_START_MM to DISPENSE_SWEEP_END_MM
-        (and back, repeating) until stop is set. Stops after completing whichever
-        move_to() is in progress when the event fires.
+        Single clean sweep from the current dispense position to
+        DISPENSE_SWEEP_END_MM while the extruder runs.
         """
-        positions = [DISPENSE_SWEEP_START_MM, DISPENSE_SWEEP_END_MM]
-        idx = 0
-        while not stop.is_set():
-            self._gantry.move_to(positions[idx])
-            idx = 1 - idx   # alternate between start and end
-        log.info("Dispense sweep: stopped at %dmm", positions[idx])
+        self._gantry.move_to(DISPENSE_SWEEP_END_MM)
+        log.info("Dispense sweep: complete at %dmm", DISPENSE_SWEEP_END_MM)
 
     def _safe_abort(self) -> None:
         """Best-effort cleanup after a failure. Tries to stop all actuators."""
