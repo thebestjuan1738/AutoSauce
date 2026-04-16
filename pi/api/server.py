@@ -32,7 +32,6 @@ from pi.ordering.sauce_config import get_coverage_levels, POSITIONS
 from pi.utils.logger import log, get_recent_logs
 from pi.motion.arduino_controller import ArduinoController
 from pi.motion.gripper import GPIOGripper, _CLOSE_TARGET_TICKS as _GRIPPER_CLOSE_TICKS
-# GPIOGantry is imported lazily inside the endpoint to avoid crashing if pyvesc is missing
 
 # ─── App ──────────────────────────────────────────────────────────────────────
 
@@ -109,6 +108,15 @@ _order_manager: OrderManager | None = None
 def set_order_manager(om: OrderManager) -> None:
     global _order_manager
     _order_manager = om
+
+
+# ─── Gantry singleton ────────────────────────────────────────────────────────
+# Injected at startup by main.py so position state is preserved across requests.
+_gantry = None
+
+def set_gantry(gantry) -> None:
+    global _gantry
+    _gantry = gantry
 
 def get_order_manager() -> OrderManager:
     if _order_manager is None:
@@ -287,9 +295,10 @@ def manual_gantry_positions():
 def manual_move_gantry(location: str):
     if location not in POSITIONS:
         raise HTTPException(status_code=400, detail=f"Unknown location '{location}'. Valid: {list(POSITIONS.keys())}")
+    if _gantry is None:
+        raise HTTPException(status_code=503, detail="Gantry not initialised")
     try:
-        from pi.motion.vesc_gantry import VESCGantry
-        VESCGantry().move_to(POSITIONS[location])
+        _gantry.move_to(POSITIONS[location])
         log.info(f"Manual: gantry moved to '{location}' ({POSITIONS[location]} mm)")
         return {"success": True}
     except Exception as e:

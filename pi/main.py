@@ -16,7 +16,7 @@ import os
 import uvicorn
 from pi.ordering.order_manager import OrderManager
 from pi.motion.mock_drivers import MockGantry, MockGripper, MockExtruder, MockConveyor
-from pi.api.server import app, set_order_manager
+from pi.api.server import app, set_order_manager, set_gantry
 from pi.utils.logger import log
 
 # ── Driver toggle ──────────────────────────────────────────────────────────────
@@ -112,6 +112,7 @@ def main():
 
     om = build_order_manager()
     set_order_manager(om)   # give the API access to the order manager
+    set_gantry(om.gantry)   # share the same gantry instance with manual endpoints
     om.start()              # start the background worker thread
 
     log.info("Starting API server on http://localhost:8080")
