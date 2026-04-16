@@ -128,6 +128,20 @@
           <button class="log-debug-btn" id="debug-open-grabber-btn">Open Grabber</button>
           <button class="log-debug-btn" id="debug-open-extruder-btn">Open Extruder</button>
           <button class="log-debug-btn" id="debug-meet-plunger-btn">Meet Plunger</button>
+          <button class="log-debug-btn manual-modal-grid--full" id="debug-move-gantry-btn">Move Gantry</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Gantry location picker popup -->
+    <div class="manual-modal" id="gantry-modal" hidden>
+      <div class="manual-modal-card">
+        <div class="manual-modal-header">
+          <span>Move Gantry To</span>
+          <button class="log-action-btn" id="gantry-modal-close" aria-label="Close">&times;</button>
+        </div>
+        <div class="manual-modal-grid" id="gantry-location-grid">
+          <!-- populated by JS from /api/manual/gantry-positions -->
         </div>
       </div>
     </div>

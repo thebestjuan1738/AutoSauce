@@ -505,6 +505,13 @@ header h1 {
   flex-shrink: 0;
 }
 
+/* Manual Controls button centred on its own row above Restart */
+#debug-manual-btn {
+  grid-column: 1 / -1;
+  max-width: 200px;
+  justify-self: center;
+}
+
 /* Restart button spans full width on its own row */
 .log-debug-btn--danger {
   grid-column: 1 / -1;
@@ -563,6 +570,10 @@ header h1 {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 8px;
+}
+
+.manual-modal-grid--full {
+  grid-column: 1 / -1;
 }
 
 .log-debug-btn {

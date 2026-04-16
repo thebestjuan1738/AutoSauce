@@ -28,10 +28,11 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from pi.ordering.order_manager import OrderManager, OrderStatus
-from pi.ordering.sauce_config import get_coverage_levels
+from pi.ordering.sauce_config import get_coverage_levels, POSITIONS
 from pi.utils.logger import log, get_recent_logs
 from pi.motion.arduino_controller import ArduinoController
 from pi.motion.gripper import GPIOGripper, _CLOSE_TARGET_TICKS as _GRIPPER_CLOSE_TICKS
+from pi.motion.gantry import GPIOGantry
 
 # ─── App ──────────────────────────────────────────────────────────────────────
 
@@ -276,3 +277,20 @@ def manual_open_extruder():
 @app.post("/api/manual/meet-plunger")
 def manual_meet_plunger():
     return _manual("MEET_PLUNGER", timeout=45.0)
+
+@app.get("/api/manual/gantry-positions")
+def manual_gantry_positions():
+    """Returns available named gantry positions."""
+    return {"positions": list(POSITIONS.keys())}
+
+@app.post("/api/manual/move-gantry/{location}")
+def manual_move_gantry(location: str):
+    if location not in POSITIONS:
+        raise HTTPException(status_code=400, detail=f"Unknown location '{location}'. Valid: {list(POSITIONS.keys())}")
+    try:
+        GPIOGantry().move_to(POSITIONS[location])
+        log.info(f"Manual: gantry moved to '{location}' ({POSITIONS[location]} mm)")
+        return {"success": True}
+    except Exception as e:
+        log.error(f"Manual move-gantry/{location} failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))

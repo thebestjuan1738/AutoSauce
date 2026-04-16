@@ -358,6 +358,9 @@ const debugManualBtn   = document.getElementById('debug-manual-btn');
 const debugRestartBtn  = document.getElementById('debug-restart-btn');
 const manualModal      = document.getElementById('manual-modal');
 const manualModalClose = document.getElementById('manual-modal-close');
+const gantryModal      = document.getElementById('gantry-modal');
+const gantryModalClose = document.getElementById('gantry-modal-close');
+const gantryLocationGrid = document.getElementById('gantry-location-grid');
 
 const debugHomeGrabberBtn  = document.getElementById('debug-home-grabber-btn');
 const debugHomeExtruderBtn = document.getElementById('debug-home-extruder-btn');
@@ -365,12 +368,44 @@ const debugCloseGrabberBtn = document.getElementById('debug-close-grabber-btn');
 const debugOpenGrabberBtn  = document.getElementById('debug-open-grabber-btn');
 const debugOpenExtruderBtn = document.getElementById('debug-open-extruder-btn');
 const debugMeetPlungerBtn  = document.getElementById('debug-meet-plunger-btn');
+const debugMoveGantryBtn   = document.getElementById('debug-move-gantry-btn');
 
 // Open / close manual controls modal
 debugManualBtn.addEventListener('click', () => { manualModal.hidden = false; });
 manualModalClose.addEventListener('click', () => { manualModal.hidden = true; });
 manualModal.addEventListener('click', e => {
   if (e.target === manualModal) manualModal.hidden = true;
+});
+
+// Move Gantry — fetch positions then open location picker
+debugMoveGantryBtn.addEventListener('click', async () => {
+  try {
+    const res = await fetch(`${API_BASE}/api/manual/gantry-positions`);
+    const { positions } = await res.json();
+
+    // Build a button for each location
+    gantryLocationGrid.innerHTML = positions.map(loc =>
+      `<button class="log-debug-btn" data-location="${loc}">${loc.charAt(0).toUpperCase() + loc.slice(1)}</button>`
+    ).join('');
+
+    gantryLocationGrid.querySelectorAll('button').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const loc = btn.dataset.location;
+        gantryModal.hidden = true;
+        debugAction(`/api/manual/move-gantry/${loc}`, btn, 'Moving...');
+        fetchLogs();
+      });
+    });
+
+    gantryModal.hidden = false;
+  } catch (err) {
+    console.warn('[SauceBot] Could not load gantry positions:', err.message);
+  }
+});
+
+gantryModalClose.addEventListener('click', () => { gantryModal.hidden = true; });
+gantryModal.addEventListener('click', e => {
+  if (e.target === gantryModal) gantryModal.hidden = true;
 });
 
 async function debugAction(endpoint, btn, workingLabel) {
