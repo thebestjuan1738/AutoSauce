@@ -16,7 +16,7 @@ class ArduinoController:
                 cls._instance._init_serial()
             return cls._instance
 
-    _BOOT_TIMEOUT = 10.0   # seconds to wait for READY banner
+    _BOOT_TIMEOUT = 15.0   # seconds to wait for READY banner (ESC arming takes ~6 s)
 
     # Known Arduino/clone USB VIDs — matched before falling back to description keywords.
     _ARDUINO_VIDS = frozenset({

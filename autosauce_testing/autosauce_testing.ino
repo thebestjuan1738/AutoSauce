@@ -147,12 +147,23 @@ void setup() {
   attachInterrupt(digitalPinToInterrupt(extruderB), ISR_extruderB, CHANGE);
 
   // ESCs
-  escGrabber.attach(SIGNAL_PIN_GRABBER);  // Attach to any pin, we will use writeMicroseconds() with custom signals
+  escGrabber.attach(SIGNAL_PIN_GRABBER);
   escExtruder.attach(SIGNAL_PIN_EXTRUDER);
+
+  // ── ESC arming sequence ──────────────────────────────
+  // ESCs require full-high → full-low → neutral before they accept commands.
+  escGrabber.writeMicroseconds(1900);
+  escExtruder.writeMicroseconds(1900);
+  delay(2000);
+
+  escGrabber.writeMicroseconds(1100);
+  escExtruder.writeMicroseconds(1100);
+  delay(2000);
 
   escGrabber.writeMicroseconds(1500);
   escExtruder.writeMicroseconds(1500);
   delay(2000);
+  // ─────────────────────────────────────────────────────
 
   Serial.println("=== ARDUINO READY ===");
 }
@@ -170,9 +181,9 @@ void processCommand(String cmd) {
     Serial.println("DONE");
   } 
   else if (cmd == "HOME_EXTRUDER") {
-    // 1300 might be appropriate for extruder based on Python, but setup originally used 1700.
-    // Changing to 1700 matching previous setup() homing, feel free to tune.
-    homeMotor(escExtruder, extruderTicks, 1700);
+    // 1300 drives the extruder toward the retracted (home) end-stop.
+    // Dispense then runs at 1700 (positive direction) with room to travel.
+    homeMotor(escExtruder, extruderTicks, 1300);
     Serial.println("DONE");
   }
   else if (cmd.startsWith("MOVE_GRIPPER:")) {
