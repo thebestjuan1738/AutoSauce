@@ -9,8 +9,8 @@ from pi.motion.arduino_controller import ArduinoController
 
 # ─── Motion constants ──────────────────────────────────────────────────────────
 _TICKS_PER_REV         = 753
-_CLOSE_REVOLUTIONS     = 1.6
-_CLOSE_TARGET_TICKS    = -int(_CLOSE_REVOLUTIONS * _TICKS_PER_REV)   # -1204
+_CLOSE_REVOLUTIONS     = 2.0
+_CLOSE_TARGET_TICKS    = -int(_CLOSE_REVOLUTIONS * _TICKS_PER_REV)   # -1506
 
 
 class GPIOGripper:

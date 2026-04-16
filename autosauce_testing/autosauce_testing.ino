@@ -108,9 +108,9 @@ void moveMotorTo(Servo &esc, volatile long &ticks, long target) {
   while (abs(ticks - target) > MOVE_TOLERANCE) {
 
     if (ticks > target) {
-      esc.writeMicroseconds(1350);   // move negative direction
+      esc.writeMicroseconds(1300);   // move negative direction
     } else {
-      esc.writeMicroseconds(1650);   // move positive direction
+      esc.writeMicroseconds(1700);   // move positive direction
     }
 
     // Stall detection — abort if encoder hasn't moved in MOVE_STALL_MS
