@@ -72,11 +72,6 @@ STALL_KICK_DUTY  = MAX_DUTY_GANTRY   # kick at the duty ceiling (0.70)
 STALL_KICK_S     = 0.35  # how long to hold the kick
 STALL_MAX_KICKS  = 3     # give up after this many failed kicks
 
-# Debug mode — set True to log every poll iteration inside move_to() so you can
-# see tachometer_abs, duty, ticks_remaining, and elapsed time at 20 Hz.
-# Leave False in production (verbose — ~20 lines/second per move).
-DEBUG_MOVE = True
-
 # USB VID/PID used to identify the VESC regardless of plug-in order.
 # Run `python -m serial.tools.list_ports -v` to verify your device's VID and PID.
 # VESC 4.x / 6.x on STM32 hardware is typically VID=0x0483, PID=0x5740.
@@ -381,25 +376,11 @@ class VESCGantry:
         last_ticks_seen = start_ticks
         kicks           = 0
 
-        if DEBUG_MOVE:
-            log.debug(
-                "VESCGantry DBG start_ticks=%d  target_ticks=%d  direction=%+d",
-                start_ticks, start_ticks + direction * delta_ticks, direction,
-            )
-
         while True:
             # tachometer_abs always increases — measure distance travelled from start
             current_ticks   = self._get_encoder_position()
             ticks_travelled = abs(current_ticks - start_ticks)
             ticks_remaining = delta_ticks - ticks_travelled
-            elapsed         = time.monotonic() - move_start
-
-            if DEBUG_MOVE:
-                log.debug(
-                    "VESCGantry DBG  t=%.3fs  tach=%d  travelled=%d  remaining=%d (~%.1fmm)",
-                    elapsed, current_ticks, ticks_travelled,
-                    ticks_remaining, ticks_remaining / TICKS_PER_MM,
-                )
 
             if ticks_remaining <= POSITION_TOLERANCE_TICKS:
                 break
@@ -422,12 +403,6 @@ class VESCGantry:
             p_duty = self._p_duty(ticks_remaining, delta_ticks, max_duty)
             duty = MIN_DUTY_GANTRY + time_factor * (p_duty - MIN_DUTY_GANTRY)
             self._ser.write(_packet_set_duty(-direction * duty))
-
-            if DEBUG_MOVE:
-                log.debug(
-                    "VESCGantry DBG  time_factor=%.3f  p_duty=%.4f  duty=%.4f  dir=%+d",
-                    time_factor, p_duty, duty, direction,
-                )
 
             # Stall detection — no tachometer progress for STALL_DETECT_S
             if current_ticks != last_ticks_seen:
