@@ -681,11 +681,22 @@ header h1 {
 }
 
 .gantry-slider-val {
-  font-size: 0.75rem;
-  font-weight: 600;
-  letter-spacing: 1px;
+  font-size: 1.6rem;
+  font-weight: 800;
+  letter-spacing: 2px;
   color: #a5b4fc;
   text-align: center;
+  line-height: 1;
+  margin-bottom: 6px;
+}
+
+.gantry-slider-ticks {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 3px;
+  font-size: 0.65rem;
+  color: #4b5563;
+  letter-spacing: 0.5px;
 }
 
 .gantry-custom-input {

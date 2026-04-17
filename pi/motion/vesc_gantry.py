@@ -36,7 +36,7 @@ VESC_GANTRY_BAUD = 115200
 # Map speed 0–100 → duty 0.0–MAX_DUTY.
 MAX_DUTY_GANTRY  = 0.8           # 70% duty ceiling — raise only after verifying mechanics
 # Minimum duty applied even at low speeds — needed to overcome sticky/noisy sections.
-MIN_DUTY_GANTRY  = 0.0       # never go below this when the motor is running
+MIN_DUTY_GANTRY  = 0.5      # never go below this when the motor is running
 # Duty ceiling used during the dispense sweep so the gantry moves slowly
 # while sauce is being applied.  Must be >= MIN_DUTY_GANTRY or the motor
 # won't turn and the stall kick will fire at full duty instead.
@@ -352,7 +352,7 @@ class VESCGantry:
         if ticks_remaining >= effective_zone:
             return max_duty
         ramp = ticks_remaining / effective_zone          # 1.0 → 0.0 as target approaches
-        return MIN_DUTY_GANTRY + (ramp ** 2) * (max_duty - MIN_DUTY_GANTRY)
+        return MIN_DUTY_GANTRY + ramp * (max_duty - MIN_DUTY_GANTRY)
 
     def move_to(self, position_mm: int, max_duty: float = MAX_DUTY_GANTRY) -> None:
         """
