@@ -60,7 +60,7 @@ TRAVEL_TIMEOUT_S = 30
 # Startup accel ramp — duty rises linearly from 0 → P-controlled value over this
 # many seconds.  Keeps the torque increase gradual so the gantry doesn't lurch.
 # Raise ACCEL_RAMP_S if jitter persists; lower it if the start feels too slow.
-ACCEL_RAMP_S = 1.0  # seconds to ramp from 0 to full duty on move start
+ACCEL_RAMP_S = 2.0  # seconds to ramp from 0 to full duty on move start
 
 # Deceleration zone — duty ramps from MAX_DUTY_GANTRY down to MIN_DUTY_GANTRY
 # over the last DECEL_ZONE_MM of travel.
