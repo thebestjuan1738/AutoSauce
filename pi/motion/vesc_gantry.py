@@ -352,7 +352,7 @@ class VESCGantry:
         if ticks_remaining >= effective_zone:
             return max_duty
         ramp = ticks_remaining / effective_zone          # 1.0 → 0.0 as target approaches
-        return MIN_DUTY_GANTRY + ramp * (max_duty - MIN_DUTY_GANTRY)
+        return MIN_DUTY_GANTRY + (ramp ** 2) * (max_duty - MIN_DUTY_GANTRY)
 
     def move_to(self, position_mm: int, max_duty: float = MAX_DUTY_GANTRY) -> None:
         """
