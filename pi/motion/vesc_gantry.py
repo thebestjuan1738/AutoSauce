@@ -45,7 +45,7 @@ MIN_DUTY_GANTRY  = 0.0     # never go below this when the motor is running
 SWEEP_MAX_DUTY   = 0.51
 # Speed used for move_to() calls (0–100 abstract units).
 # 80 × 0.5 = 0.40 effective duty — enough torque to drive a loaded gantry.
-TRAVEL_SPEED = 10
+TRAVEL_SPEED = 2
 
 # Calibrated: average of runs 2–3 from calibrate_gantry.py (3.56, 3.78 ticks/mm).
 TICKS_PER_MM = 3.67               # encoder ticks per mm of belt travel
