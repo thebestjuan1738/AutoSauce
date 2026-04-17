@@ -66,6 +66,11 @@ ACCEL_RAMP_S = 0.25 # seconds to ramp from 0 to full duty on move start
 # over the last DECEL_ZONE_MM of travel.
 DECEL_ZONE_MM = 50   # mm before target where ramp begins
 
+# Static-friction break — a brief full-duty surge fired once at move start to
+# overcome stiction before the normal accel ramp takes over.
+STATIC_BREAK_DUTY = MAX_DUTY_GANTRY   # duty during the surge (0.0 to disable)
+STATIC_BREAK_S    = 0.08              # duration of the surge in seconds
+
 # Stall detection — if tachometer_abs doesn't advance for this long, fire a torque kick.
 STALL_DETECT_S   = 0.6   # seconds of no progress before a kick
 STALL_KICK_DUTY  = MAX_DUTY_GANTRY   # kick at the duty ceiling (0.70)
@@ -369,6 +374,13 @@ class VESCGantry:
             "VESCGantry: move_to %dmm  (from %dmm, Δ%+d ticks needed)",
             position_mm, self._position_mm, direction * delta_ticks,
         )
+
+        # Static-friction break — short full-duty burst before the accel ramp starts.
+        if STATIC_BREAK_DUTY > 0:
+            log.debug("VESCGantry: static-friction break at duty=%.2f for %.3fs",
+                      STATIC_BREAK_DUTY, STATIC_BREAK_S)
+            self._ser.write(_packet_set_duty(-direction * STATIC_BREAK_DUTY))
+            time.sleep(STATIC_BREAK_S)
 
         deadline        = time.monotonic() + TRAVEL_TIMEOUT_S
         move_start      = time.monotonic()   # used for time-based accel ramp
