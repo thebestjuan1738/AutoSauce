@@ -440,7 +440,7 @@ class VESCGantry:
                 self._ser.write(_packet_set_duty(-kick_duty))
                 time.sleep(STALL_KICK_S)
                 last_tick_time = time.monotonic()  # reset stall clock; P ramp resumes next iter
-            time.sleep(0.01)  # poll at 20 Hz
+            time.sleep(0.05)  # poll at 20 Hz
 
         self.stop()
         self._position_mm = position_mm

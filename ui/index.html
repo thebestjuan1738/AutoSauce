@@ -145,7 +145,10 @@
           <!-- populated by JS from /api/manual/gantry-positions -->
         </div>
         <div class="gantry-custom-row">
-          <input type="number" id="gantry-custom-input" class="gantry-custom-input" placeholder="Custom (mm)" min="0" step="1" />
+          <div class="gantry-slider-wrap">
+            <input type="range" id="gantry-custom-input" class="gantry-custom-input" min="0" max="400" step="1" value="0" />
+            <span class="gantry-slider-val" id="gantry-slider-val">0 mm</span>
+          </div>
           <button class="log-debug-btn" id="gantry-custom-btn">Move</button>
         </div>
       </div>

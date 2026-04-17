@@ -426,16 +426,15 @@ gantryModal.addEventListener('click', e => {
   if (e.target === gantryModal) gantryModal.hidden = true;
 });
 
+// Slider label sync
+const gantrySliderVal = document.getElementById('gantry-slider-val');
+gantryCustomInput.addEventListener('input', () => {
+  gantrySliderVal.textContent = `${gantryCustomInput.value} mm`;
+});
+
 // Custom position move
 gantryCustomBtn.addEventListener('click', () => {
   const mm = parseInt(gantryCustomInput.value, 10);
-  if (isNaN(mm) || mm < 0) {
-    const orig = gantryCustomBtn.textContent;
-    gantryCustomBtn.textContent = 'Invalid!';
-    setTimeout(() => { gantryCustomBtn.textContent = orig; }, 2000);
-    return;
-  }
-  gantryCustomInput.value = '';
   gantryModal.hidden = true;
   debugAction(`/api/manual/move-gantry-mm/${mm}`, gantryCustomBtn, 'Moving...');
   fetchLogs();
