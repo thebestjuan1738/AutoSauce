@@ -27,7 +27,7 @@ POSITIONS = {
 # Gantry dispense sweep end position.
 # The gantry starts at POSITIONS["dispense"] and makes one clean pass to
 # DISPENSE_SWEEP_END_MM while the extruder runs (~30 mm for a full sandwich).
-DISPENSE_SWEEP_END_MM = 80
+DISPENSE_SWEEP_END_MM = 150
 
 # ─── Gripper (encoder-based, no timing config needed) ────────────────────────
 # Tune _CLOSE_TARGET_TICKS in pi/motion/gripper.py if grip depth needs adjusting.

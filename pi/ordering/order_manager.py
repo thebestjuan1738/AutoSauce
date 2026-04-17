@@ -185,17 +185,13 @@ class OrderManager:
         conveyor_thread.join()                           # wait for belt to finish
         log.info("Step 6+7: conveyor + sweep done")
 
-        # 7+8. Retract extruder while gantry moves home — safe to overlap since the
-        # extruder retracts vertically while the gantry travels laterally.
-        log.info("Step 7+8: extruder retract + gantry → home (simultaneous)")
+        # 7+8. Retract extruder while gantry returns to dock — safe to overlap
+        # since the extruder retracts vertically while the gantry travels laterally.
+        log.info("Step 7+8: extruder retract + gantry → dock (simultaneous)")
         retract_thread = threading.Thread(target=self._extruder.retract, daemon=True)
         retract_thread.start()
-        self._gantry.move_to(POSITIONS["home"])
-        retract_thread.join()
-
-        # 8. Travel to dock to return the bottle
-        log.info("Step 8: gantry → dock")
         self._gantry.move_to(POSITIONS["dock"])
+        retract_thread.join()
 
         # 9. Open gripper — release sauce dispenser at dock
         log.info("Step 9: gripper open")
