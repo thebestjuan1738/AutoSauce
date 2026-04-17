@@ -36,13 +36,12 @@ VESC_GANTRY_BAUD = 115200
 # Map speed 0–100 → duty 0.0–MAX_DUTY.
 MAX_DUTY_GANTRY  = 0.7           # 70% duty ceiling — raise only after verifying mechanics
 # Minimum duty applied even at low speeds — needed to overcome sticky/noisy sections.
-MIN_DUTY_GANTRY  = 0.5           # never go below this when the motor is running
+MIN_DUTY_GANTRY  = 0.52          # never go below this when the motor is running
 # Duty ceiling used during the dispense sweep so the gantry moves slowly
-# while sauce is being applied.  Must be >= MIN_DUTY_GANTRY or the motor
-# won't turn and the stall kick will fire at full duty instead.
-# 0.51 = just 2% above the minimum — slowest reliable continuous motion.
-# The accel ramp starts at MIN_DUTY (not 0), so no stall kick fires on sweep start.
-SWEEP_MAX_DUTY   = 0.51
+# while sauce is being applied.  Must be meaningfully above MIN_DUTY_GANTRY so
+# the motor runs reliably rather than hunting at the stiction boundary.
+# 0.55 = ~6% above MIN — slow, even motion without stall-kick thrashing.
+SWEEP_MAX_DUTY   = 0.55
 # Speed used for move_to() calls (0–100 abstract units).
 # 80 × 0.5 = 0.40 effective duty — enough torque to drive a loaded gantry.
 TRAVEL_SPEED = 80
@@ -57,10 +56,12 @@ POSITION_TOLERANCE_TICKS = 7
 # Raise TimeoutError if the gantry doesn't reach the target within this many seconds.
 TRAVEL_TIMEOUT_S = 30
 
-# Startup accel ramp — duty rises linearly from 0 → P-controlled value over this
-# many seconds.  Keeps the torque increase gradual so the gantry doesn't lurch.
-# Raise ACCEL_RAMP_S if jitter persists; lower it if the start feels too slow.
-ACCEL_RAMP_S = 0.1  # seconds to ramp from 0 to full duty on move start
+# Startup accel ramp — duty rises linearly from MIN_DUTY → P-controlled value over
+# this many seconds.  Keeps the torque increase gradual so the gantry doesn't lurch.
+# A longer ramp is especially important for normal travel where the duty range is
+# wide (0.52 → 0.70); the sweep's range (0.52 → 0.55) is small enough that ramp
+# length has little effect there.
+ACCEL_RAMP_S = 1.5  # seconds to ramp from MIN_DUTY to full duty on move start
 
 # Deceleration zone — duty ramps from MAX_DUTY_GANTRY down to MIN_DUTY_GANTRY
 # over the last DECEL_ZONE_MM of travel.
@@ -422,8 +423,11 @@ class VESCGantry:
                     "VESCGantry: stall detected (%d/%d) — torque kick at duty=%.2f",
                     kicks, STALL_MAX_KICKS, STALL_KICK_DUTY,
                 )
-                # Brief high-duty kick to break through the sticky section
-                kick_duty = STALL_KICK_DUTY if direction > 0 else -STALL_KICK_DUTY
+                # Scale kick duty to max_duty so a slow sweep doesn't get a
+                # full-ceiling lurch.  Add 0.12 headroom above cruise but cap
+                # at MAX_DUTY_GANTRY to respect the hardware ceiling.
+                effective_kick = min(max_duty + 0.12, MAX_DUTY_GANTRY)
+                kick_duty = effective_kick if direction > 0 else -effective_kick
                 self._ser.write(_packet_set_duty(-kick_duty))
                 time.sleep(STALL_KICK_S)
                 last_tick_time = time.monotonic()  # reset stall clock; P ramp resumes next iter
