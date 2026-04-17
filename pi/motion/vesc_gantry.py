@@ -36,7 +36,7 @@ VESC_GANTRY_BAUD = 115200
 # Map speed 0–100 → duty 0.0–MAX_DUTY.
 MAX_DUTY_GANTRY  = 0.7           # 70% duty ceiling — raise only after verifying mechanics
 # Minimum duty applied even at low speeds — needed to overcome sticky/noisy sections.
-MIN_DUTY_GANTRY  = 0.5           # never go below this when the motor is running
+MIN_DUTY_GANTRY  = 0.0        # never go below this when the motor is running
 # Duty ceiling used during the dispense sweep so the gantry moves slowly
 # while sauce is being applied.  Must be >= MIN_DUTY_GANTRY or the motor
 # won't turn and the stall kick will fire at full duty instead.
@@ -428,7 +428,7 @@ class VESCGantry:
                 time.sleep(STALL_KICK_S)
                 last_tick_time = time.monotonic()  # reset stall clock; P ramp resumes next iter
 
-            time.sleep(0.05)  # poll at 20 Hz
+            time.sleep(0.01)  # poll at 20 Hz
 
         self.stop()
         self._position_mm = position_mm
