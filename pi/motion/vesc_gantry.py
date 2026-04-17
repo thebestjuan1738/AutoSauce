@@ -34,7 +34,7 @@ VESC_GANTRY_PORT = "COM4"          if sys.platform == "win32" else "/dev/ttyACM0
 VESC_GANTRY_BAUD = 115200
 
 # Map speed 0–100 → duty 0.0–MAX_DUTY.
-MAX_DUTY_GANTRY  = 0.7           # 70% duty ceiling — raise only after verifying mechanics
+MAX_DUTY_GANTRY  = 0.8           # 70% duty ceiling — raise only after verifying mechanics
 # Minimum duty applied even at low speeds — needed to overcome sticky/noisy sections.
 MIN_DUTY_GANTRY  = 0.0       # never go below this when the motor is running
 # Duty ceiling used during the dispense sweep so the gantry moves slowly
@@ -69,7 +69,7 @@ DECEL_ZONE_MM = 50   # mm before target where ramp begins
 # Static-friction break — a brief full-duty surge fired once at move start to
 # overcome stiction before the normal accel ramp takes over.
 STATIC_BREAK_DUTY = MAX_DUTY_GANTRY   # duty during the surge (0.0 to disable)
-STATIC_BREAK_S    = 0.08              # duration of the surge in seconds
+STATIC_BREAK_S    = 0.25              # duration of the surge in seconds
 
 # Stall detection — if tachometer_abs doesn't advance for this long, fire a torque kick.
 STALL_DETECT_S   = 0.6   # seconds of no progress before a kick
