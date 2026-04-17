@@ -389,6 +389,9 @@ class VESCGantry:
         last_ticks_seen = start_ticks
         kicks           = 0
 
+        log_interval  = 0.5   # seconds between position log lines
+        last_log_time = 0.0
+
         while True:
             # tachometer is signed — measure net distance travelled from start
             current_ticks   = self._get_encoder_position()
@@ -416,6 +419,16 @@ class VESCGantry:
             p_duty = self._p_duty(ticks_remaining, delta_ticks, max_duty)
             duty = MIN_DUTY_GANTRY + time_factor * (p_duty - MIN_DUTY_GANTRY)
             self._ser.write(_packet_set_duty(-direction * duty))
+
+            now = time.monotonic()
+            if now - last_log_time >= log_interval:
+                current_mm = self._position_mm + direction * int(ticks_travelled / TICKS_PER_MM)
+                log.debug(
+                    "VESCGantry: pos=%dmm  ticks=%d/%d  remaining=%dmm  duty=%.3f  tf=%.2f",
+                    current_mm, ticks_travelled, delta_ticks,
+                    int(ticks_remaining / TICKS_PER_MM), duty, time_factor,
+                )
+                last_log_time = now
 
             # Stall detection — no tachometer progress for STALL_DETECT_S
             if current_ticks != last_ticks_seen:
