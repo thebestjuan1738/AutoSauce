@@ -5,7 +5,7 @@ Gantry driver for the SauceBot — NEO rev brushless motor controlled by a VESC 
 Implements the move_to(position_mm) interface expected by OrderManager.
 
 Speaks the VESC serial protocol directly — no pyvesc dependency.
-Uses tachometer_abs from COMM_GET_VALUES for closed-loop position control.
+Uses tachometer from COMM_GET_VALUES for closed-loop position control.
 
 USB port auto-selects by OS:
     Windows → COM4
@@ -71,7 +71,7 @@ DECEL_ZONE_MM = 50   # mm before target where ramp begins
 STATIC_BREAK_DUTY = MAX_DUTY_GANTRY   # duty during the surge (0.0 to disable)
 STATIC_BREAK_S    = 0.25              # duration of the surge in seconds
 
-# Stall detection — if tachometer_abs doesn't advance for this long, fire a torque kick.
+# Stall detection — if tachometer doesn't advance for this long, fire a torque kick.
 STALL_DETECT_S   = 0.6   # seconds of no progress before a kick
 STALL_KICK_DUTY  = MAX_DUTY_GANTRY   # kick at the duty ceiling (0.70)
 STALL_KICK_S     = 0.35  # how long to hold the kick
@@ -221,6 +221,7 @@ def _parse_get_values(payload: bytes) -> dict:
         "duty_cycle":      raw_duty       / 1000.0,
         "rpm":             raw_rpm,
         "v_in":            raw_vin        / 10.0,
+        "tachometer":      _tach,
         "tachometer_abs":  tach_abs,
         "fault_code":      fault,
         "fault_name":      _FAULT_NAMES.get(fault, f"UNKNOWN({fault})"),
@@ -303,11 +304,11 @@ class VESCGantry:
         log.info("VESCGantry: boot check passed ✓")
 
     def _get_encoder_position(self) -> int:
-        """Request telemetry and return the absolute tachometer tick count."""
+        """Request telemetry and return the signed tachometer tick count."""
         self._ser.reset_input_buffer()
         self._ser.write(_packet_get_values())
         payload = _read_packet(self._ser)
-        return _parse_get_values(payload)["tachometer_abs"]
+        return _parse_get_values(payload)["tachometer"]
 
     def calibrate(self, duration_s: float = 5.0) -> None:
         """
@@ -356,7 +357,7 @@ class VESCGantry:
     def move_to(self, position_mm: int, max_duty: float = MAX_DUTY_GANTRY) -> None:
         """
         Closed-loop move to position_mm (from the dock end of the rail).
-        Polls tachometer_abs at 20 Hz until within POSITION_TOLERANCE_TICKS.
+        Polls tachometer at 20 Hz until within POSITION_TOLERANCE_TICKS.
         Pass max_duty=SWEEP_MAX_DUTY for a slow dispense sweep.
 
         Calibrate TICKS_PER_MM at the top of this file — see module docstring.
@@ -389,7 +390,7 @@ class VESCGantry:
         kicks           = 0
 
         while True:
-            # tachometer_abs always increases — measure distance travelled from start
+            # tachometer is signed — measure net distance travelled from start
             current_ticks   = self._get_encoder_position()
             ticks_travelled = abs(current_ticks - start_ticks)
             ticks_remaining = delta_ticks - ticks_travelled
