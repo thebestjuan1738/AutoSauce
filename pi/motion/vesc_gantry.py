@@ -34,9 +34,9 @@ VESC_GANTRY_PORT = "COM4"          if sys.platform == "win32" else "/dev/ttyACM0
 VESC_GANTRY_BAUD = 115200
 
 # Map speed 0–100 → duty 0.0–MAX_DUTY.
-MAX_DUTY_GANTRY  = 0.8           # 70% duty ceiling — raise only after verifying mechanics
+MAX_DUTY_GANTRY  = 0.7           # 70% duty ceiling — raise only after verifying mechanics
 # Minimum duty applied even at low speeds — needed to overcome sticky/noisy sections.
-MIN_DUTY_GANTRY  = 0.1           # never go below this when the motor is running
+MIN_DUTY_GANTRY  = 0.5           # never go below this when the motor is running
 # Duty ceiling used during the dispense sweep so the gantry moves slowly
 # while sauce is being applied.  Must be >= MIN_DUTY_GANTRY or the motor
 # won't turn and the stall kick will fire at full duty instead.
