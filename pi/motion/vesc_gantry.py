@@ -387,6 +387,7 @@ class VESCGantry:
                 start_ticks, start_ticks + direction * delta_ticks, direction,
             )
 
+        while True:
             # tachometer_abs always increases — measure distance travelled from start
             current_ticks   = self._get_encoder_position()
             ticks_travelled = abs(current_ticks - start_ticks)
@@ -427,7 +428,8 @@ class VESCGantry:
                     "VESCGantry DBG  time_factor=%.3f  p_duty=%.4f  duty=%.4f  dir=%+d",
                     time_factor, p_duty, duty, direction,
                 )
- — no tachometer progress for STALL_DETECT_S
+
+            # Stall detection — no tachometer progress for STALL_DETECT_S
             if current_ticks != last_ticks_seen:
                 last_ticks_seen = current_ticks
                 last_tick_time  = time.monotonic()
