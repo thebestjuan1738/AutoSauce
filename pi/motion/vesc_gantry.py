@@ -383,6 +383,12 @@ class VESCGantry:
             self._ser.write(_packet_set_duty(-direction * STATIC_BREAK_DUTY))
             time.sleep(STATIC_BREAK_S)
 
+        # Pre-compute the signed target so ticks_remaining is directional.
+        # Using abs() on a signed tachometer caused oscillation: if the encoder
+        # bounced backward by a few ticks, abs() made ticks_remaining grow,
+        # which ramped duty back up, which caused overshoot, repeat.
+        target_ticks = start_ticks + direction * delta_ticks
+
         deadline        = time.monotonic() + TRAVEL_TIMEOUT_S
         move_start      = time.monotonic()   # used for time-based accel ramp
         last_tick_time  = time.monotonic()
@@ -393,10 +399,11 @@ class VESCGantry:
         last_log_time = 0.0
 
         while True:
-            # tachometer is signed — measure net distance travelled from start
-            current_ticks   = self._get_encoder_position()
-            ticks_travelled = abs(current_ticks - start_ticks)
-            ticks_remaining = delta_ticks - ticks_travelled
+            current_ticks = self._get_encoder_position()
+            # Signed remaining: positive = still approaching, negative = overshot.
+            ticks_remaining = direction * (target_ticks - current_ticks)
+            # Clamp ticks_travelled for the decel ramp — never let it go backward.
+            ticks_travelled = max(0, delta_ticks - ticks_remaining)
 
             if ticks_remaining <= POSITION_TOLERANCE_TICKS:
                 break
@@ -408,7 +415,7 @@ class VESCGantry:
                 raise TimeoutError(
                     f"VESCGantry timed out after {TRAVEL_TIMEOUT_S}s "
                     f"moving to {position_mm}mm "
-                    f"(~{int(ticks_remaining / TICKS_PER_MM)}mm remaining)"
+                    f"(~{int(max(0, ticks_remaining) / TICKS_PER_MM)}mm remaining)"
                 )
 
             # ── Accel (time) + decel (position) ramp ─────────────────────
@@ -426,7 +433,7 @@ class VESCGantry:
                 log.debug(
                     "VESCGantry: pos=%dmm  ticks=%d/%d  remaining=%dmm  duty=%.3f  tf=%.2f",
                     current_mm, ticks_travelled, delta_ticks,
-                    int(ticks_remaining / TICKS_PER_MM), duty, time_factor,
+                    int(max(0, ticks_remaining) / TICKS_PER_MM), duty, time_factor,
                 )
                 last_log_time = now
 
