@@ -159,7 +159,7 @@ class OrderManager:
 
         # 4. Wait for extruder to make contact with the pad before moving.
         log.info("Step 4: extruder → meet plunger")
-        self._extruder.meet_plunger()
+        #self._extruder.meet_plunger()
 
         # 5+6. Conveyor, extruder dispense, and slow gantry sweep simultaneously.
         # Contact is already confirmed — extruder now pushes the fixed dispense amount
@@ -179,7 +179,7 @@ class OrderManager:
         )
         conveyor_thread.start()
         sweep_thread.start()
-        self._extruder.dispense()                        # blocks until done
+        #self._extruder.dispense()                        # blocks until done
         stop_sweep.set()
         sweep_thread.join()                              # finishes current move
         conveyor_thread.join()                           # wait for belt to finish
