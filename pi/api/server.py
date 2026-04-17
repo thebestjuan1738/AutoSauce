@@ -291,6 +291,13 @@ def manual_gantry_positions():
     """Returns available named gantry positions."""
     return {"positions": list(POSITIONS.keys())}
 
+@app.get("/api/manual/gantry-position")
+def manual_gantry_position():
+    """Returns the current gantry position in mm."""
+    if _gantry is None:
+        return {"position_mm": None}
+    return {"position_mm": _gantry._position_mm}
+
 @app.post("/api/manual/move-gantry/{location}")
 def manual_move_gantry(location: str):
     if location not in POSITIONS:
@@ -303,4 +310,19 @@ def manual_move_gantry(location: str):
         return {"success": True}
     except Exception as e:
         log.error(f"Manual move-gantry/{location} failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/manual/move-gantry-mm/{mm}")
+def manual_move_gantry_mm(mm: int):
+    """Moves the gantry to an arbitrary position in mm."""
+    if mm < 0:
+        raise HTTPException(status_code=400, detail="Position must be non-negative")
+    if _gantry is None:
+        raise HTTPException(status_code=503, detail="Gantry not initialised")
+    try:
+        _gantry.move_to(mm)
+        log.info(f"Manual: gantry moved to {mm} mm")
+        return {"success": True}
+    except Exception as e:
+        log.error(f"Manual move-gantry-mm/{mm} failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))

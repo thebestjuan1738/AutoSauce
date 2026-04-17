@@ -369,6 +369,9 @@ const debugOpenGrabberBtn  = document.getElementById('debug-open-grabber-btn');
 const debugOpenExtruderBtn = document.getElementById('debug-open-extruder-btn');
 const debugMeetPlungerBtn  = document.getElementById('debug-meet-plunger-btn');
 const debugMoveGantryBtn   = document.getElementById('debug-move-gantry-btn');
+const gantryCustomInput    = document.getElementById('gantry-custom-input');
+const gantryCustomBtn      = document.getElementById('gantry-custom-btn');
+const gantryCurrentPos     = document.getElementById('gantry-current-pos');
 
 // Open / close manual controls modal
 debugManualBtn.addEventListener('click', () => { manualModal.hidden = false; });
@@ -377,8 +380,23 @@ manualModal.addEventListener('click', e => {
   if (e.target === manualModal) manualModal.hidden = true;
 });
 
+async function fetchGantryCurrentPosition() {
+  try {
+    const res = await fetch(`${API_BASE}/api/manual/gantry-position`);
+    const data = await res.json();
+    gantryCurrentPos.textContent = data.position_mm != null
+      ? `Current position: ${data.position_mm} mm`
+      : 'Current position: unavailable';
+  } catch (err) {
+    gantryCurrentPos.textContent = 'Current position: unavailable';
+  }
+}
+
 // Move Gantry — fetch positions then open location picker
 debugMoveGantryBtn.addEventListener('click', async () => {
+  gantryCurrentPos.textContent = 'Current position: loading…';
+  fetchGantryCurrentPosition();
+
   try {
     const res = await fetch(`${API_BASE}/api/manual/gantry-positions`);
     const { positions } = await res.json();
@@ -406,6 +424,21 @@ debugMoveGantryBtn.addEventListener('click', async () => {
 gantryModalClose.addEventListener('click', () => { gantryModal.hidden = true; });
 gantryModal.addEventListener('click', e => {
   if (e.target === gantryModal) gantryModal.hidden = true;
+});
+
+// Custom position move
+gantryCustomBtn.addEventListener('click', () => {
+  const mm = parseInt(gantryCustomInput.value, 10);
+  if (isNaN(mm) || mm < 0) {
+    const orig = gantryCustomBtn.textContent;
+    gantryCustomBtn.textContent = 'Invalid!';
+    setTimeout(() => { gantryCustomBtn.textContent = orig; }, 2000);
+    return;
+  }
+  gantryCustomInput.value = '';
+  gantryModal.hidden = true;
+  debugAction(`/api/manual/move-gantry-mm/${mm}`, gantryCustomBtn, 'Moving...');
+  fetchLogs();
 });
 
 async function debugAction(endpoint, btn, workingLabel) {

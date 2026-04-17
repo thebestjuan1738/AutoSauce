@@ -140,8 +140,13 @@
           <span>Move Gantry To</span>
           <button class="log-action-btn" id="gantry-modal-close" aria-label="Close">&times;</button>
         </div>
+        <p class="gantry-current-pos" id="gantry-current-pos">Current position: --</p>
         <div class="manual-modal-grid" id="gantry-location-grid">
           <!-- populated by JS from /api/manual/gantry-positions -->
+        </div>
+        <div class="gantry-custom-row">
+          <input type="number" id="gantry-custom-input" class="gantry-custom-input" placeholder="Custom (mm)" min="0" step="1" />
+          <button class="log-debug-btn" id="gantry-custom-btn">Move</button>
         </div>
       </div>
     </div>
