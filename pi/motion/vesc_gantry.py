@@ -50,7 +50,14 @@ BOOT_TIMEOUT_S = 20.0
 # USB VID of the VESC — always skipped when scanning for the gantry Arduino.
 _VESC_VID = 0x0483   # STMicroelectronics
 
+# Exact VID+PID of the gantry controller — Silicon Labs CP210x UART Bridge.
+# Confirmed from `lsusb`: Bus 003 Device 003: ID 10c4:ea60
+# This device is tried first before the generic probe loop.
+_GANTRY_VID = 0x10C4
+_GANTRY_PID = 0xEA60
+
 # VIDs and description substrings associated with NodeMCU / Arduino clones.
+# Used as fallback candidates if the exact VID+PID match above fails.
 _ARDUINO_VIDS = frozenset({
     0x2341,  # Arduino SA
     0x2A03,  # Arduino SRL
@@ -65,13 +72,27 @@ _ARDUINO_KEYWORDS = ('arduino', 'ch340', 'ch341', 'ftdi', 'usb serial', 'cp210')
 
 def _find_gantry_port() -> str:
     """
-    Scan serial ports for the gantry Arduino. Sends POS to each candidate and
-    looks for a [POS] response to confirm gantry firmware. Skips the VESC VID.
-    Falls back to GANTRY_PORT if no matching port is found.
+    Scan serial ports for the gantry Arduino (CP210x, VID=0x10C4 PID=0xEA60).
+
+    Strategy:
+      1. Try the exact VID+PID match first (Silicon Labs CP210x ea60).
+      2. Fall back to probing all other Arduino-VID candidates.
+      3. For each candidate, send POS and confirm a [POS] response.
+
+    This avoids sending POS to unrelated Arduinos (Mega, Uno) on the same hub
+    unless the priority device isn't found.
+    Falls back to GANTRY_PORT if nothing responds correctly.
     """
+    all_ports = serial.tools.list_ports.comports()
+
+    # Split into: exact match first, then remaining Arduino-VID candidates.
+    priority   = []
     candidates = []
-    for p in serial.tools.list_ports.comports():
+    for p in all_ports:
         if p.vid == _VESC_VID:
+            continue
+        if p.vid == _GANTRY_VID and p.pid == _GANTRY_PID:
+            priority.append(p.device)
             continue
         desc = (p.description or '').lower()
         if p.vid in _ARDUINO_VIDS or any(k in desc for k in _ARDUINO_KEYWORDS):
@@ -81,7 +102,9 @@ def _find_gantry_port() -> str:
         digits = ''.join(c for c in name if c.isdigit())
         return int(digits) if digits else 999
 
-    for port_name in sorted(candidates, key=_num):
+    ordered = sorted(priority, key=_num) + sorted(candidates, key=_num)
+
+    for port_name in ordered:
         try:
             probe = serial.Serial(port_name, GANTRY_BAUD, timeout=2)
             time.sleep(0.1)
