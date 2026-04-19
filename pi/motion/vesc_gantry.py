@@ -80,21 +80,20 @@ _ARDUINO_KEYWORDS = ('arduino', 'ch340', 'ch341', 'ftdi', 'usb serial', 'cp210')
 
 def _find_gantry_port() -> str:
     """
-    Scan serial ports for the gantry Arduino (CP210x, VID=0x10C4 PID=0xEA60).
+    Find the gantry serial port.
 
     Strategy:
-      1. Try the exact VID+PID match first (Silicon Labs CP210x ea60).
-      2. Fall back to probing all other Arduino-VID candidates.
-      3. For each candidate, send POS and confirm a [POS] response.
+      1. Return immediately if the exact VID+PID (CP210x 10c4:ea60) is found.
+         No POS probe — the Arduino may still be in its 10s boot sequence and
+         won't respond to commands yet. boot_check() handles the wait.
+      2. For any remaining Arduino-VID candidates (unknown devices), send POS
+         and confirm a [POS] response before accepting them.
+      3. Fall back to GANTRY_PORT if nothing is found.
 
-    This avoids sending POS to unrelated Arduinos (Mega, Uno) on the same hub
-    unless the priority device isn't found.
-    Falls back to GANTRY_PORT if nothing responds correctly.
+    Devices in _SKIP_DEVICES (Mega, Uno) are never touched.
     """
     all_ports = serial.tools.list_ports.comports()
 
-    # Split into: exact match first, then remaining Arduino-VID candidates.
-    priority   = []
     candidates = []
     for p in all_ports:
         if p.vid == _VESC_VID:
@@ -102,19 +101,18 @@ def _find_gantry_port() -> str:
         if (p.vid, p.pid) in _SKIP_DEVICES:
             continue   # Mega (gripper/extruder) or Uno (conveyor) — not the gantry
         if p.vid == _GANTRY_VID and p.pid == _GANTRY_PID:
-            priority.append(p.device)
-            continue
+            log.info("VESCGantry: found CP210x gantry on %s (%s)", p.device, p.description)
+            return p.device   # exact match — trust the VID+PID, skip probe
         desc = (p.description or '').lower()
         if p.vid in _ARDUINO_VIDS or any(k in desc for k in _ARDUINO_KEYWORDS):
             candidates.append(p.device)
 
+    # Generic fallback: probe unknown candidates with POS
     def _num(name: str) -> int:
         digits = ''.join(c for c in name if c.isdigit())
         return int(digits) if digits else 999
 
-    ordered = sorted(priority, key=_num) + sorted(candidates, key=_num)
-
-    for port_name in ordered:
+    for port_name in sorted(candidates, key=_num):
         try:
             probe = serial.Serial(port_name, GANTRY_BAUD, timeout=2)
             time.sleep(0.1)
