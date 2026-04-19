@@ -23,14 +23,34 @@ MAX_TRAVEL_MM = MAX_TRAVEL_INCHES * 25.4   # ~342.9 mm
 import time as _time
 
 
-def _analyse_speed(speeds, esc_samples, target_ips, clamp, msp):
+def _analyse_speed(speeds, esc_samples, target_ips, clamp, msp, speed_ctrl=True):
     """
     Print a speed analysis summary from a list of (abs_speed, esc_offset) samples.
     When target_ips is None (open-loop FWD/REV run) a simplified summary is shown.
+    When speed_ctrl is False (RUNOFF / raw PID run) the MIN_PULSE_OFFSET floor
+    analysis is skipped — it does not apply when speed control is off.
     """
     if not speeds:
         return
     abs_spd = [abs(s) for s in speeds]
+
+    print("  ─── Speed analysis ───────────────────────────────")
+    print(f"  Peak speed        : {max(abs_spd):.3f} in/s")
+    print(f"  Avg speed         : {sum(abs_spd)/len(abs_spd):.3f} in/s  ({len(abs_spd)} samples)")
+
+    if not speed_ctrl:
+        # Raw PID mode: ESC output scales with position error and is not floored
+        # at MIN_PULSE_OFFSET.  Show peak-speed / motor-max estimate only.
+        clamp_speeds = [s for s, e in esc_samples if e >= clamp - 5 and s > 0.2]
+        if clamp_speeds:
+            est_max_raw = max(clamp_speeds)
+            print(f"  Speed @ full clamp: {est_max_raw:.1f} in/s  (ESC offset={clamp})")
+        print(f"  Mode              : raw PID (SPEEDOFF) — no ESC floor")
+        print(f"  Note: PID output ∝ position error; clamp={clamp} limits max speed.")
+        print(f"        Reduce KD to dampen overshoot; reduce KP to slow approach.")
+        print("  ──────────────────────────────────────────────────")
+        return
+
     CRUISE_ESC_OFFSET = 100  # firmware MIN_PULSE_OFFSET
 
     # Separate samples by ESC zone
@@ -50,9 +70,6 @@ def _analyse_speed(speeds, esc_samples, target_ips, clamp, msp):
 
     est_max = floor_speed * (clamp / CRUISE_ESC_OFFSET) if floor_speed > 0 else msp
 
-    print("  ─── Speed analysis ───────────────────────────────")
-    print(f"  Peak speed        : {max(abs_spd):.3f} in/s")
-    print(f"  Avg speed         : {sum(abs_spd)/len(abs_spd):.3f} in/s  ({len(abs_spd)} samples)")
     if bang_bang:
         print(f"  Bang-bang detected: {len(neutral_speeds)} neutral phases, {len(floor_speeds)} floor phases")
         print(f"  Floor speed (est) : ~{floor_speed:.1f} in/s  "
@@ -300,7 +317,8 @@ def main():
                 if _state['speed_ctrl']:
                     g._send("SPEEDON")   # restore if it was on
                 _analyse_speed(speeds, esc_samples, target_ips=_state['speed_ips'],
-                               clamp=_state['clamp'], msp=_state['msp'])
+                               clamp=_state['clamp'], msp=_state['msp'],
+                               speed_ctrl=False)
                 if not arrived:
                     g._position_mm = -1
                 print()
