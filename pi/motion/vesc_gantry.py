@@ -226,57 +226,83 @@ class VESCGantry:
             Detected by the "Counts/inch" + "---" separator at the end of the banner.
           - Already running: [STATUS] lines arrive immediately within 2 s.
 
+        The ESP8266 boot ROM outputs at 74880 baud before the app starts at 115200,
+        so the first several seconds of output are garbled. [STATUS] lines begin
+        arriving ~10 s in but may themselves be partially corrupted. Boot detection
+        therefore uses partial-match fallbacks in addition to exact strings.
+
         Raises RuntimeError if firmware doesn't respond within BOOT_TIMEOUT_S.
         """
         log.info("VESCGantry: waiting for firmware boot...")
         self._ser.reset_input_buffer()
 
-        # Quick check: already running?
+        # Quick check: already running? (firmware was live before DTR reset or
+        # boot_check called without a reset — STATUS arrives within 2 s).
         quick_deadline = time.monotonic() + 2.0
         while time.monotonic() < quick_deadline:
             line = self._readline()
             if not line:
                 continue
             log.debug("VESCGantry boot: %s", line)
-            if '[STATUS]' in line:
+            if self._is_status_line(line):
                 log.info("VESCGantry: firmware already running — skipping banner wait")
-                self._ser.reset_input_buffer()
-                self._send("POS")
-                deadline = time.monotonic() + 3.0
-                while time.monotonic() < deadline:
-                    line = self._readline()
-                    if '[POS]' in line:
-                        log.info("VESCGantry: boot check passed — %s", line)
-                        return
-                raise RuntimeError("VESCGantry: did not respond to POS during boot check")
-
-        # Fresh boot path: wait for banner completion marker ("Counts/inch" then "---")
-        counts_seen = False
-        deadline = time.monotonic() + BOOT_TIMEOUT_S
-        while time.monotonic() < deadline:
-            line = self._readline()
-            if not line:
-                continue
-            log.debug("VESCGantry boot: %s", line)
-            if 'Counts/inch' in line:
-                counts_seen = True
-            elif counts_seen and line.startswith('---'):
-                log.info("VESCGantry: boot banner complete")
                 break
+        else:
+            # Fresh boot path: wait for banner completion marker ("Counts/inch" then "---").
+            # Also accept STATUS-like lines as confirmation the banner is done —
+            # they start appearing ~10 s in even when partially garbled.
+            counts_seen = False
+            deadline = time.monotonic() + BOOT_TIMEOUT_S
+            while time.monotonic() < deadline:
+                line = self._readline()
+                if not line:
+                    continue
+                log.debug("VESCGantry boot: %s", line)
+                if 'Counts/inch' in line:
+                    counts_seen = True
+                elif counts_seen and line.startswith('---'):
+                    log.info("VESCGantry: boot banner complete")
+                    break
+                elif self._is_status_line(line):
+                    log.info("VESCGantry: STATUS detected during banner — firmware running")
+                    break
 
-        # Verify two-way comms with POS
-        self._ser.reset_input_buffer()
-        self._send("POS")
-        deadline = time.monotonic() + 3.0
-        while time.monotonic() < deadline:
-            line = self._readline()
-            if '[POS]' in line:
-                log.info("VESCGantry: boot check passed — %s", line)
-                return
-            if '[ERR]' in line:
-                raise RuntimeError(f"VESCGantry boot check error: {line}")
+        # Verify two-way comms with POS.  Retry up to 3 times (9 s total) because
+        # STATUS lines flooding the buffer can delay or garble the first POS response.
+        for attempt in range(1, 4):
+            self._ser.reset_input_buffer()
+            self._send("POS")
+            deadline = time.monotonic() + 3.0
+            while time.monotonic() < deadline:
+                line = self._readline()
+                if '[POS]' in line:
+                    log.info("VESCGantry: boot check passed — %s", line)
+                    return
+                if '[ERR]' in line:
+                    raise RuntimeError(f"VESCGantry boot check error: {line}")
+            log.warning("VESCGantry: POS attempt %d/3 timed out — retrying", attempt)
 
         raise RuntimeError("VESCGantry: did not respond to POS command during boot check")
+
+    @staticmethod
+    def _is_status_line(line: str) -> bool:
+        """
+        Return True if line looks like a firmware [STATUS] line.
+        Accepts partial/garbled variants produced by the ESP8266 boot ROM baud-rate
+        mismatch (e.g. '[STATS]', '[STTUS', '[TUS]') by checking for substrings
+        that reliably survive mild corruption: 'Pos:' + 'in/s', or 'FWD:' + 'ESC:'.
+        """
+        if '[STATUS]' in line:
+            return True
+        # Partial tag patterns seen in garbled output
+        if any(tag in line for tag in ('[STATS]', '[STTUS', '[STATUS', 'STATUS]')):
+            return True
+        # Content patterns that only appear in STATUS lines
+        if 'Pos:' in line and 'in/s' in line:
+            return True
+        if 'FWD:' in line and 'ESC:' in line:
+            return True
+        return False
 
     # ── Position & status ─────────────────────────────────────────────────────
 
