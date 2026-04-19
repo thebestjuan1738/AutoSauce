@@ -80,8 +80,11 @@ def _analyse_speed(speeds, esc_samples, target_ips, clamp, msp):
 def _stream_log(g, stop_tags=('[GOTO] Arrived', '[GOTO] Aborted', '[ERR]'),
                 timeout=35.0):
     """
-    Stream firmware LOG lines until a stop tag is seen, Ctrl-C, or timeout.
-    Returns (speeds, esc_samples, arrived) where arrived is True if a stop_tag matched.
+    Stream firmware output until a stop tag is seen, Ctrl-C, or timeout.
+    Collects speed/ESC from CSV log lines (when LOG is active) and from
+    [STATUS] lines (always present) so open-loop FWD/REV runs are captured
+    even when LOG is toggled after the motor command.
+    Returns (speeds, esc_samples, arrived).
     """
     speeds = []
     esc_samples = []
@@ -92,6 +95,7 @@ def _stream_log(g, stop_tags=('[GOTO] Arrived', '[GOTO] Aborted', '[ERR]'),
             line = g.read_log_line()
             if not line:
                 continue
+            # CSV log line: ms,pos_in,target_in,error_in,speed_in_s,esc_us
             if ',' in line and not line.startswith('['):
                 parts = line.split(',')
                 if len(parts) >= 6:
@@ -106,6 +110,17 @@ def _stream_log(g, stop_tags=('[GOTO] Arrived', '[GOTO] Aborted', '[ERR]'),
             else:
                 if line.startswith('['):
                     print(f"  {line}")
+                # Parse [STATUS] lines as fallback speed source — always present
+                # even when CSV LOG is off (e.g. open-loop FWD/REV).
+                # Format: [STATUS] Pos: X in | Spd: Y in/s | ... | ESC: Zus
+                if '[STATUS]' in line:
+                    try:
+                        spd = float(line.split('Spd:')[1].split('in/s')[0].strip())
+                        esc = int(line.split('ESC:')[1].split('us')[0].strip())
+                        speeds.append(spd)
+                        esc_samples.append((abs(spd), abs(esc - 1500)))
+                    except (IndexError, ValueError):
+                        pass
                 for tag in stop_tags:
                     if tag in line:
                         arrived = True
@@ -114,7 +129,7 @@ def _stream_log(g, stop_tags=('[GOTO] Arrived', '[GOTO] Aborted', '[ERR]'),
                     break
     except KeyboardInterrupt:
         g.stop()
-        print("  Interrupted — motor stopped.")
+        print("  Interrupted \u2014 motor stopped.")
     return speeds, esc_samples, arrived
 
 
@@ -320,10 +335,13 @@ def main():
                 pct = int(cmd[3:]) if cmd[3:] else 25
                 print(f"  FWD {pct}% — streaming live data (Ctrl-C to stop motor)...")
                 print("  ms, pos_in, target_in, error_in, speed_in_s, esc_us")
+                # Send motor command FIRST. FWD sets logging=false in firmware,
+                # so LOG must be sent after to re-enable the CSV stream.
+                g._ser.reset_input_buffer()
+                g.fwd(pct)
+                _time.sleep(0.05)
                 g._ser.reset_input_buffer()
                 g._send("LOG")
-                _time.sleep(0.02)
-                g.fwd(pct)
                 speeds, esc_samples, _ = _stream_log(
                     g, stop_tags=('[LIMIT]', '[ERR]'), timeout=60.0)
                 g._send("LOG")
@@ -339,10 +357,13 @@ def main():
                 pct = int(cmd[3:]) if cmd[3:] else 25
                 print(f"  REV {pct}% — streaming live data (Ctrl-C to stop motor)...")
                 print("  ms, pos_in, target_in, error_in, speed_in_s, esc_us")
+                # Send motor command FIRST. REV sets logging=false in firmware,
+                # so LOG must be sent after to re-enable the CSV stream.
+                g._ser.reset_input_buffer()
+                g.rev(pct)
+                _time.sleep(0.05)
                 g._ser.reset_input_buffer()
                 g._send("LOG")
-                _time.sleep(0.02)
-                g.rev(pct)
                 speeds, esc_samples, _ = _stream_log(
                     g, stop_tags=('[LIMIT]', '[ERR]'), timeout=60.0)
                 g._send("LOG")
