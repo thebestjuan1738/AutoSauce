@@ -32,37 +32,58 @@ def _analyse_speed(speeds, esc_samples, target_ips, clamp, msp):
         return
     abs_spd = [abs(s) for s in speeds]
     CRUISE_ESC_OFFSET = 100  # firmware MIN_PULSE_OFFSET
-    cruise = [s for s, e in esc_samples
-              if abs(e - CRUISE_ESC_OFFSET) <= 5 and s > 0.2]
-    avg_cruise = sum(cruise) / len(cruise) if cruise else (sum(abs_spd) / len(abs_spd))
-    est_max = avg_cruise * (clamp / CRUISE_ESC_OFFSET) if avg_cruise > 0 else msp
+
+    # Separate samples by ESC zone
+    floor_speeds   = [s for s, e in esc_samples if abs(e - CRUISE_ESC_OFFSET) <= 5 and s > 0.2]
+    neutral_speeds = [s for s, e in esc_samples if e < 10 and s > 0.2]
+
+    # Bang-bang detection: ESC alternates between floor and neutral throughout the move.
+    # When bang-bang, floor_speeds are ramp-up samples (not steady state) and
+    # neutral_speeds (motor coasting after each burst) better approximate the
+    # steady-state speed the motor reaches when ESC is held at MIN_PULSE_OFFSET.
+    bang_bang = len(floor_speeds) > 3 and len(neutral_speeds) > 3
+    if bang_bang:
+        neutral_sorted = sorted(neutral_speeds)
+        floor_speed = neutral_sorted[int(0.50 * len(neutral_sorted))]  # median coasting speed
+    else:
+        floor_speed = (sum(floor_speeds) / len(floor_speeds)) if floor_speeds else (sum(abs_spd) / len(abs_spd))
+
+    est_max = floor_speed * (clamp / CRUISE_ESC_OFFSET) if floor_speed > 0 else msp
 
     print("  ─── Speed analysis ───────────────────────────────")
     print(f"  Peak speed        : {max(abs_spd):.3f} in/s")
     print(f"  Avg speed         : {sum(abs_spd)/len(abs_spd):.3f} in/s  ({len(abs_spd)} samples)")
-    print(f"  Avg @ min-pulse   : {avg_cruise:.2f} in/s  "
-          f"({len(cruise)} cruise samples at ESC offset={CRUISE_ESC_OFFSET})")
+    if bang_bang:
+        print(f"  Bang-bang detected: {len(neutral_speeds)} neutral phases, {len(floor_speeds)} floor phases")
+        print(f"  Floor speed (est) : ~{floor_speed:.1f} in/s  "
+              f"(median coasting speed — motor steady-state at ESC offset={CRUISE_ESC_OFFSET})")
+    else:
+        print(f"  Avg @ min-pulse   : {floor_speed:.2f} in/s  "
+              f"({len(floor_speeds)} cruise samples at ESC offset={CRUISE_ESC_OFFSET})")
     print(f"  Est. motor max    : {est_max:.1f} in/s  "
           f"(extrapolated at CLAMP={clamp})")
-    print(f"  Min controllable  : ~{avg_cruise:.1f} in/s  "
+    print(f"  Min controllable  : ~{floor_speed:.1f} in/s  "
           "(limited by MIN_PULSE_OFFSET=100, hardcoded in firmware)")
 
     if target_ips is not None:
         print(f"  Target speed      : {target_ips:.2f} in/s")
         print()
-        if target_ips < avg_cruise * 0.85:
-            fw_min = int(CRUISE_ESC_OFFSET * target_ips / avg_cruise) if avg_cruise > 0 else 30
+        if target_ips < floor_speed * 0.85:
+            fw_min = int(CRUISE_ESC_OFFSET * target_ips / floor_speed) if floor_speed > 0 else 30
             print(f"  ⚠ TARGET {target_ips:.2f} in/s IS BELOW THE MINIMUM CONTROLLABLE SPEED")
             print(f"    The firmware floors all output at MIN_PULSE_OFFSET=100.")
-            print(f"    At that floor the motor runs at ~{avg_cruise:.1f} in/s regardless of SPEED setting.")
-            print(f"    Speed feedback correction is capped at ±50 in firmware,")
-            print(f"    so it cannot pull output below the 100-unit floor.")
+            print(f"    At that floor the motor runs at ~{floor_speed:.1f} in/s regardless of SPEED setting.")
+            if bang_bang:
+                print(f"    Bang-bang: motor bursts to ~{floor_speed:.1f} in/s then cuts to neutral repeatedly.")
+            else:
+                print(f"    Speed feedback correction is capped by firmware")
+                print(f"    and cannot pull output below the 100-unit floor.")
             print()
             print(f"  Recommended fixes (pick one):")
-            print(f"    1. SPEEDOFF  — use raw PID; naturally decelerates near target (best for positioning)")
+            print(f"    1. RUNOFF / SPEEDOFF — raw PID (no floor); output decays naturally near target")
             print(f"    2. Firmware: lower MIN_PULSE_OFFSET from 100 to ~{max(fw_min, 10)}")
-            print(f"       (in autosauce_testing.ino: #define MIN_PULSE_OFFSET {max(fw_min, 10)})")
-            print(f"    3. Increase SPEED to ≥{avg_cruise:.1f} in/s if fast moves are acceptable")
+            print(f"       (in the ESP8266 gantry firmware: #define MIN_PULSE_OFFSET {max(fw_min, 10)})")
+            print(f"    3. Increase SPEED to ≥{floor_speed:.1f} in/s if faster moves are acceptable")
         else:
             rec_msp = round(est_max, 1)
             print(f"  MSP calibration   : current={msp:.1f}, recommended={rec_msp}")
@@ -147,6 +168,7 @@ _state = {
 def _print_help():
     print("------------------------------")
     print("  RUN<in>           GOTO with live speed log        e.g. RUN6.5")
+    print("  RUNOFF<in>        RUN with raw PID (no floor jitter)  e.g. RUNOFF3.0")
     print("  GOTO<in>          Go to position in inches        e.g. GOTO6.5")
     print("  MM<mm>            Go to position in millimetres   e.g. MM165")
     print("  SWEEP<mm>         Slow sauce-sweep move (mm)      e.g. SWEEP80")
@@ -255,6 +277,35 @@ def main():
                 pass
             g.toggle_log()   # turn it back off
             print("  LOG off.\n")
+
+        elif cmd.startswith('RUNOFF'):
+            # Like RUN but with SPEEDOFF (raw PID) — avoids MIN_PULSE_OFFSET floor jitter.
+            # Raw PID output scales with position error so it naturally decelerates near target.
+            try:
+                inches = float(cmd[6:])
+                if not 0.0 <= inches <= MAX_TRAVEL_INCHES:
+                    print(f"  Out of range. Must be 0\u2013{MAX_TRAVEL_INCHES} in.\n")
+                    continue
+                print(f"  RUNOFF {inches:.4f} in  (raw PID, speed ctrl OFF)")
+                print("  ms, pos_in, target_in, error_in, speed_in_s, esc_us")
+                g._ser.reset_input_buffer()
+                g._send("SPEEDOFF")
+                _time.sleep(0.05)
+                g._ser.reset_input_buffer()
+                g._send("LOG")
+                _time.sleep(0.02)
+                g._send(f"GOTO{inches:.4f}")
+                speeds, esc_samples, arrived = _stream_log(g)
+                g._send("LOG")
+                if _state['speed_ctrl']:
+                    g._send("SPEEDON")   # restore if it was on
+                _analyse_speed(speeds, esc_samples, target_ips=_state['speed_ips'],
+                               clamp=_state['clamp'], msp=_state['msp'])
+                if not arrived:
+                    g._position_mm = -1
+                print()
+            except ValueError:
+                print("  Usage: RUNOFF<inches>  e.g. RUNOFF3.0\n")
 
         elif cmd.startswith('RUN'):
             # GOTO with live LOG streaming — lets you see speed vs position in real-time.
