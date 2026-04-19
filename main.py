@@ -83,7 +83,6 @@ def build_order_manager() -> OrderManager:
 
 def main():
     log.info("=== SauceBot starting ===")
-    log.info("hi this is adam's test")
 
     om = build_order_manager()
     set_order_manager(om)   # give the API access to the order manager

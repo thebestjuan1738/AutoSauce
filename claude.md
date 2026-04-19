@@ -2,6 +2,12 @@
 
 Raspberry Pi-based automated sauce dispensing system. A touchscreen kiosk that lets users select sauce coverage level (light/medium/heavy), then automates a multi-actuator sequence to dispense sauce onto items on a conveyor belt.
 
+## Important Guidelines
+
+- **DO NOT modify `main.py`** - Changes require Docker image rebuild. Avoid unless explicitly told.
+- **`pi/ordering/order_manager.py`** - Main orchestration program that controls all sequencing. Make changes here for workflow modifications.
+- **`pi/motion/` scripts** - Control subclasses that send serial commands to slave Arduinos and ESP32s. Modify these for hardware control changes.
+
 ## Tech Stack
 
 - **Backend**: Python 3.10+, FastAPI, Uvicorn
@@ -133,16 +139,28 @@ stop() → None
 ## Raspberry Pi Deployment
 
 ```bash
-# SSH access
-ssh saucemachine@<ip>  # password: me424
+# SSH into the Raspberry Pi
+ssh saucemachine@172.28.85.104
+# Password: me424
 
-# Docker deployment
+# Navigate to the project
+cd AutoSauce/
+
+# Pull latest changes
+git pull
+
+# Restart the backend service
+sudo systemctl restart sauce-backend
+
+# View logs
+docker logs sauce-backend
+```
+
+### Docker Build (if needed)
+
+```bash
 sudo docker build -t saucebot-backend .
 sudo docker run -d --name saucebot --device /dev/ttyACM0 -p 8080:8080 saucebot-backend
-
-# Systemd services
-sudo systemctl start sauce-backend sauce-ui
-sudo systemctl status sauce-backend
 ```
 
 ## Common Issues

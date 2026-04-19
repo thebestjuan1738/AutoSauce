@@ -83,6 +83,7 @@ class OrderManager:
 
     def start(self) -> None:
         """Start the background worker. Call once at application startup."""
+        log.info("hi this is adam's test")
         log.info("OrderManager: starting worker thread")
         self._worker.start()
 

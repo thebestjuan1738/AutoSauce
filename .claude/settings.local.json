@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(cat:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(git push)",
+      "Bash(git pull:*)",
+      "Bash(ssh saucemachine@172.28.85.104 \"cd AutoSauce && git pull && sudo systemctl restart sauce-backend && sleep 3 && docker logs sauce-backend --tail 50\")"
+    ]
+  }
+}
