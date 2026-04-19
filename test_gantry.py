@@ -162,7 +162,10 @@ def main():
                 g._send("LOG")          # enable live stream
                 _time.sleep(0.02)
                 g._send(f"GOTO{inches:.4f}")
-                speeds = []
+                # Collect ESC pulse values alongside speeds for motor characterisation.
+                # Each sample: (speed_in_s, esc_us)
+                speeds = []        # raw signed speed samples
+                esc_samples = []   # (abs_speed, esc_offset) pairs where esc_offset = esc_us - 1500
                 start = _time.monotonic()
                 arrived = False
                 try:
@@ -170,13 +173,15 @@ def main():
                         line = g.read_log_line()
                         if not line:
                             continue
-                        # CSV log line: 7 comma-separated fields
+                        # CSV log line: ms,pos_in,target_in,error_in,speed_in_s,esc_us
                         if ',' in line and not line.startswith('['):
                             parts = line.split(',')
-                            if len(parts) >= 5:
+                            if len(parts) >= 6:
                                 try:
                                     spd = float(parts[4])
+                                    esc = int(parts[5])
                                     speeds.append(spd)
+                                    esc_samples.append((abs(spd), abs(esc - 1500)))
                                 except ValueError:
                                     pass
                             print(f"  {line}")
@@ -193,18 +198,72 @@ def main():
                     g.stop()
                     print("  Interrupted — motor stopped.")
                 g._send("LOG")          # disable live stream
-                # Print speed summary
+
+                # ── Speed analysis ──────────────────────────────────────────
                 if speeds:
                     abs_spd = [abs(s) for s in speeds]
-                    print(f"  --- Speed summary ---")
-                    print(f"  Target    : {_state['speed_ips']:.2f} in/s")
-                    print(f"  Peak      : {max(abs_spd):.3f} in/s")
-                    print(f"  Avg cruise: {sum(abs_spd)/len(abs_spd):.3f} in/s  ({len(abs_spd)} samples)")
-                    over = [s for s in abs_spd if s > _state['speed_ips'] * 1.1]
-                    under = [s for s in abs_spd if s < _state['speed_ips'] * 0.9 and s > 0.1]
-                    print(f"  >10% over : {len(over)} samples")
-                    print(f"  >10% under: {len(under)} samples")
-                    print(f"  MSP (est) : {_state['msp']:.1f} in/s  — adjust MSP until avg ≈ target")
+                    target  = _state['speed_ips']
+
+                    # Cruise samples: constant ESC offset (within ±5 us), moving (>0.1 in/s)
+                    # This isolates the steady-state motor response from ramp/decel.
+                    CRUISE_ESC_OFFSET = 100  # firmware MIN_PULSE_OFFSET — floor for all output
+                    cruise = [s for s, e in esc_samples
+                              if abs(e - CRUISE_ESC_OFFSET) <= 5 and s > 0.2]
+                    avg_cruise = sum(cruise) / len(cruise) if cruise else (sum(abs_spd) / len(abs_spd))
+
+                    # Extrapolate real motor max speed from cruise observation:
+                    #   At ESC offset = CRUISE_ESC_OFFSET, motor = avg_cruise in/s
+                    #   Linear extrapolation to full clamp
+                    est_max = avg_cruise * (_state['clamp'] / CRUISE_ESC_OFFSET) if avg_cruise > 0 else _state['msp']
+
+                    # Min controllable speed: feedforward output at target must exceed MIN_PULSE_OFFSET.
+                    #   baseOutput = (target / MSP) * CLAMP
+                    #   Need baseOutput >= MIN_PULSE_OFFSET
+                    #   → min target = MIN_PULSE_OFFSET / CLAMP * MSP
+                    # But since we now know real max speed, the tighter constraint is:
+                    #   At MIN_PULSE_OFFSET, motor goes avg_cruise in/s → that IS the floor.
+                    min_ctrl = avg_cruise  # can't go slower at steady state
+
+                    print("  ─── Speed analysis ───────────────────────────────")
+                    print(f"  Target speed      : {target:.2f} in/s")
+                    print(f"  Peak speed        : {max(abs_spd):.3f} in/s")
+                    print(f"  Avg @ min-pulse   : {avg_cruise:.2f} in/s  "
+                          f"({len(cruise)} cruise samples at ESC offset={CRUISE_ESC_OFFSET})")
+                    print(f"  Est. motor max    : {est_max:.1f} in/s  "
+                          f"(extrapolated at CLAMP={_state['clamp']})")
+                    print(f"  Min controllable  : ~{min_ctrl:.1f} in/s  "
+                          f"(limited by MIN_PULSE_OFFSET=100, hardcoded in firmware)")
+                    print()
+
+                    if target < min_ctrl * 0.85:
+                        # Target is below the floor — speed control fundamentally cannot hold it.
+                        fw_min = int(CRUISE_ESC_OFFSET * target / avg_cruise) if avg_cruise > 0 else 30
+                        print(f"  ⚠ TARGET {target:.2f} in/s IS BELOW THE MINIMUM CONTROLLABLE SPEED")
+                        print(f"    The firmware floors all output at MIN_PULSE_OFFSET=100.")
+                        print(f"    At that floor the motor runs at ~{avg_cruise:.1f} in/s regardless of SPEED setting.")
+                        print(f"    Speed feedback correction is capped at ±50 in firmware,")
+                        print(f"    so it cannot pull output below the 100-unit floor.")
+                        print()
+                        print(f"  Recommended fixes (pick one):")
+                        print(f"    1. SPEEDOFF  — use raw PID; naturally decelerates near target (best for positioning)")
+                        print(f"    2. Firmware: lower MIN_PULSE_OFFSET from 100 to ~{max(fw_min, 10)}")
+                        print(f"       (in autosauce_testing.ino: #define MIN_PULSE_OFFSET {max(fw_min, 10)})")
+                        print(f"    3. Increase SPEED to ≥{min_ctrl:.1f} in/s if fast moves are acceptable")
+                    else:
+                        # Target is in range — MSP calibration may still be off.
+                        rec_msp = round(est_max, 1)
+                        print(f"  MSP calibration   : current={_state['msp']:.1f}, recommended={rec_msp}")
+                        if abs(rec_msp - _state['msp']) > 1.0:
+                            print(f"    → try: MSP{rec_msp}")
+                        else:
+                            print(f"    → MSP looks reasonable; tune SKP if overshoot persists")
+
+                    over  = [s for s in abs_spd if s > target * 1.1]
+                    under = [s for s in abs_spd if s < target * 0.9 and s > 0.1]
+                    print(f"  >10% over target  : {len(over)} / {len(abs_spd)} samples")
+                    print(f"  >10% under target : {len(under)} / {len(abs_spd)} samples")
+                    print("  ──────────────────────────────────────────────────")
+
                 if not arrived:
                     g._position_mm = -1
                 print()
