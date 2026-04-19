@@ -21,23 +21,36 @@ from pi.motion.vesc_gantry import (
 MAX_TRAVEL_MM = MAX_TRAVEL_INCHES * 25.4   # ~342.9 mm
 
 
+# Current speed-control params tracked on the Python side (shadows firmware state)
+_state = {
+    'speed_ips':  TRAVEL_SPEED_IPS,
+    'speed_kp':   2.0,
+    'msp':        8.0,
+    'clamp':      400,
+    'speed_ctrl': True,
+    'kp': 0.15, 'ki': 0.0, 'kd': 0.10,
+}
+
+
 def _print_help():
     print("------------------------------")
-    print("  GOTO<in>          Go to position in inches       e.g. GOTO6.5")
-    print("  MM<mm>            Go to position in millimetres  e.g. MM165")
-    print("  SWEEP<mm>         Slow sauce-sweep move (mm)     e.g. SWEEP80")
-    print("  FWD<0-100>        Forward power                  e.g. FWD25")
-    print("  REV<0-100>        Reverse power                  e.g. REV25")
-    print("  SPEED<in/s>       Set target speed               e.g. SPEED3.0")
+    print("  RUN<in>           GOTO with live speed log        e.g. RUN6.5")
+    print("  GOTO<in>          Go to position in inches        e.g. GOTO6.5")
+    print("  MM<mm>            Go to position in millimetres   e.g. MM165")
+    print("  SWEEP<mm>         Slow sauce-sweep move (mm)      e.g. SWEEP80")
+    print("  FWD<0-100>        Forward power                   e.g. FWD25")
+    print("  REV<0-100>        Reverse power                   e.g. REV25")
+    print("  SPEED<in/s>       Set target speed                e.g. SPEED3.0")
     print("  SPEEDON           Enable speed control")
     print("  SPEEDOFF          Disable speed control (raw PID)")
-    print("  SKP<val>          Set speed Kp                   e.g. SKP2.0")
-    print("  MSP<val>          Set max speed estimate         e.g. MSP8.0")
-    print("  CLAMP<val>        Set output clamp               e.g. CLAMP300")
-    print("  KP<val>           Set PID Kp                     e.g. KP0.15")
-    print("  KI<val>           Set PID Ki                     e.g. KI0.0")
-    print("  KD<val>           Set PID Kd                     e.g. KD0.10")
+    print("  SKP<val>          Set speed Kp                    e.g. SKP2.0")
+    print("  MSP<val>          Set max speed estimate          e.g. MSP8.0")
+    print("  CLAMP<val>        Set output clamp                e.g. CLAMP300")
+    print("  KP<val>           Set PID Kp                      e.g. KP0.15")
+    print("  KI<val>           Set PID Ki                      e.g. KI0.0")
+    print("  KD<val>           Set PID Kd                      e.g. KD0.10")
     print("  LOG               Toggle live CSV data stream")
+    print("  TUNE              Show current speed-ctrl params")
     print("  STOP / S          Stop motor immediately")
     print("  ZERO              Run homing routine")
     print("  POS  / P          Query position")
@@ -96,19 +109,33 @@ def main():
         elif cmd in ('HELP', 'H'):
             _print_help()
 
-        elif cmd in ('SPEEDON',):
+        elif cmd == 'SPEEDON':
             g.speed_on()
+            _state['speed_ctrl'] = True
             print("  Speed control ON\n")
 
-        elif cmd in ('SPEEDOFF',):
+        elif cmd == 'SPEEDOFF':
             g.speed_off()
+            _state['speed_ctrl'] = False
             print("  Speed control OFF (raw PID)\n")
+
+        elif cmd == 'TUNE':
+            print("  --- Speed-control params (Python-tracked) ---")
+            print(f"  speed_ctrl  : {'ON' if _state['speed_ctrl'] else 'OFF (raw PID)'}")
+            print(f"  target speed: {_state['speed_ips']:.2f} in/s")
+            print(f"  speed Kp    : {_state['speed_kp']}")
+            print(f"  max spd est : {_state['msp']}  (feedforward scale)")
+            print(f"  output clamp: {_state['clamp']}")
+            print(f"  PID Kp/Ki/Kd: {_state['kp']} / {_state['ki']} / {_state['kd']}")
+            print(f"  hard cap    : {MAX_SPEED_HARD_CAP} in/s")
+            print("  (Use DIAG to confirm firmware-side values)\n")
 
         elif cmd == 'LOG':
             g.toggle_log()
-            print("  LOG toggled — reading 30 lines (Ctrl-C to stop early)...")
+            print("  LOG toggled — reading live (Ctrl-C to stop)...")
+            print("  ms, pos_in, target_in, error_in, speed_in_s, esc_us")
             try:
-                for _ in range(30):
+                while True:
                     line = g.read_log_line()
                     if line:
                         print(" ", line)
@@ -117,12 +144,78 @@ def main():
             g.toggle_log()   # turn it back off
             print("  LOG off.\n")
 
+        elif cmd.startswith('RUN'):
+            # GOTO with live LOG streaming — lets you see speed vs position in real-time.
+            # Format: ms, pos_in, target_in, error_in, speed_in_s, esc_us
+            try:
+                inches = float(cmd[3:])
+                if not 0.0 <= inches <= MAX_TRAVEL_INCHES:
+                    print(f"  Out of range. Must be 0–{MAX_TRAVEL_INCHES} in.\n")
+                    continue
+                import time as _time
+                print(f"  RUN {inches:.4f} in at {_state['speed_ips']:.2f} in/s")
+                print("  ms        pos_in   tgt_in   err_in   spd_in/s  esc_us")
+                g._ser.reset_input_buffer()
+                g._send(f"SPEED{_state['speed_ips']:.2f}")
+                _time.sleep(0.05)
+                g._ser.reset_input_buffer()
+                g._send("LOG")          # enable live stream
+                _time.sleep(0.02)
+                g._send(f"GOTO{inches:.4f}")
+                speeds = []
+                start = _time.monotonic()
+                arrived = False
+                try:
+                    while _time.monotonic() - start < 35:
+                        line = g.read_log_line()
+                        if not line:
+                            continue
+                        # CSV log line: 7 comma-separated fields
+                        if ',' in line and not line.startswith('['):
+                            parts = line.split(',')
+                            if len(parts) >= 5:
+                                try:
+                                    spd = float(parts[4])
+                                    speeds.append(spd)
+                                except ValueError:
+                                    pass
+                            print(f"  {line}")
+                        elif '[GOTO] Arrived' in line:
+                            print(f"  {line}")
+                            arrived = True
+                            break
+                        elif '[GOTO] Aborted' in line or '[ERR]' in line:
+                            print(f"  {line}")
+                            break
+                        elif line.startswith('['):
+                            print(f"  {line}")
+                except KeyboardInterrupt:
+                    g.stop()
+                    print("  Interrupted — motor stopped.")
+                g._send("LOG")          # disable live stream
+                # Print speed summary
+                if speeds:
+                    abs_spd = [abs(s) for s in speeds]
+                    print(f"  --- Speed summary ---")
+                    print(f"  Target    : {_state['speed_ips']:.2f} in/s")
+                    print(f"  Peak      : {max(abs_spd):.3f} in/s")
+                    print(f"  Avg cruise: {sum(abs_spd)/len(abs_spd):.3f} in/s  ({len(abs_spd)} samples)")
+                    over = [s for s in abs_spd if s > _state['speed_ips'] * 1.1]
+                    under = [s for s in abs_spd if s < _state['speed_ips'] * 0.9 and s > 0.1]
+                    print(f"  >10% over : {len(over)} samples")
+                    print(f"  >10% under: {len(under)} samples")
+                    print(f"  MSP (est) : {_state['msp']:.1f} in/s  — adjust MSP until avg ≈ target")
+                if not arrived:
+                    g._position_mm = -1
+                print()
+            except ValueError:
+                print("  Usage: RUN<inches>  e.g. RUN6.5\n")
+
         elif cmd.startswith('GOTO'):
             try:
                 inches = float(cmd[4:])
                 print(f"  GOTO {inches:.4f} in (blocking)...")
-                g.set_speed(TRAVEL_SPEED_IPS)
-                # Use move_to for blocking wait on [GOTO] Arrived
+                g.set_speed(_state['speed_ips'])
                 mm = int(round(inches * 25.4))
                 g._position_mm = -1   # force move_to to not skip
                 g.move_to(mm)
@@ -185,49 +278,63 @@ def main():
             try:
                 ips = float(cmd[5:])
                 g.set_speed(ips)
+                _state['speed_ips'] = ips
                 print(f"  Target speed set to {ips:.2f} in/s\n")
             except ValueError:
                 print(f"  Usage: SPEED<in/s>  e.g. SPEED3.0  (max {MAX_SPEED_HARD_CAP})\n")
 
         elif cmd.startswith('SKP'):
             try:
-                g.set_speed_kp(float(cmd[3:]))
-                print(f"  Speed Kp = {cmd[3:]}\n")
+                val = float(cmd[3:])
+                g.set_speed_kp(val)
+                _state['speed_kp'] = val
+                print(f"  Speed Kp = {val}\n")
             except ValueError:
                 print("  Usage: SKP<val>  e.g. SKP2.0\n")
 
         elif cmd.startswith('MSP'):
             try:
-                g.set_max_speed_estimate(float(cmd[3:]))
-                print(f"  Max speed estimate = {cmd[3:]}\n")
+                val = float(cmd[3:])
+                g.set_max_speed_estimate(val)
+                _state['msp'] = val
+                print(f"  Max speed estimate = {val}")
+                print(f"  Tip: use RUN to check avg speed — lower MSP if under-speed, raise if over.\n")
             except ValueError:
                 print("  Usage: MSP<val>  e.g. MSP8.0\n")
 
         elif cmd.startswith('CLAMP'):
             try:
-                g.set_clamp(int(cmd[5:]))
-                print(f"  Output clamp = {cmd[5:]}\n")
+                val = int(cmd[5:])
+                g.set_clamp(val)
+                _state['clamp'] = val
+                print(f"  Output clamp = {val}\n")
             except ValueError:
                 print("  Usage: CLAMP<val>  e.g. CLAMP300\n")
 
         elif cmd.startswith('KP'):
             try:
-                g.set_kp(float(cmd[2:]))
-                print(f"  Kp = {cmd[2:]}\n")
+                val = float(cmd[2:])
+                g.set_kp(val)
+                _state['kp'] = val
+                print(f"  Kp = {val}\n")
             except ValueError:
                 print("  Usage: KP<val>  e.g. KP0.15\n")
 
         elif cmd.startswith('KI'):
             try:
-                g.set_ki(float(cmd[2:]))
-                print(f"  Ki = {cmd[2:]}\n")
+                val = float(cmd[2:])
+                g.set_ki(val)
+                _state['ki'] = val
+                print(f"  Ki = {val}\n")
             except ValueError:
                 print("  Usage: KI<val>  e.g. KI0.0\n")
 
         elif cmd.startswith('KD'):
             try:
-                g.set_kd(float(cmd[2:]))
-                print(f"  Kd = {cmd[2:]}\n")
+                val = float(cmd[2:])
+                g.set_kd(val)
+                _state['kd'] = val
+                print(f"  Kd = {val}\n")
             except ValueError:
                 print("  Usage: KD<val>  e.g. KD0.10\n")
 
