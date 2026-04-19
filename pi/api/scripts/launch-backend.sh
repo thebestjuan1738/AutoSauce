@@ -13,9 +13,11 @@ docker stop sauce-backend 2>/dev/null || true
 docker rm sauce-backend 2>/dev/null || true
 
 # Start backend container in the foreground so systemd tracks the process.
-# Mount every /dev/ttyACM* device that exists (VESC + Arduino Mega, order-independent).
+# Mount every /dev/ttyACM* and /dev/ttyUSB* device that exists.
+#   ttyACM* — Arduino Mega (gripper/extruder) and Uno (conveyor)
+#   ttyUSB* — CP210x UART bridge (gantry NodeMCU)
 DEVICE_FLAGS=""
-for dev in /dev/ttyACM*; do
+for dev in /dev/ttyACM* /dev/ttyUSB*; do
     [ -e "$dev" ] && DEVICE_FLAGS="$DEVICE_FLAGS --device $dev:$dev"
 done
 
