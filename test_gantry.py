@@ -116,18 +116,29 @@ def _analyse_speed(speeds, esc_samples, target_ips, clamp, msp, speed_ctrl=True)
 
 
 def _stream_log(g, stop_tags=('[GOTO] Arrived', '[GOTO] Aborted', '[ERR]'),
-                timeout=35.0):
+                timeout=35.0, stall_tolerance_in=0.050, stall_count=15):
     """
     Stream firmware output until a stop tag is seen, Ctrl-C, or timeout.
     Collects speed/ESC from CSV log lines (when LOG is active) and from
     [STATUS] lines (always present) so open-loop FWD/REV runs are captured
     even when LOG is toggled after the motor command.
+
+    Stall detection: if position hasn't changed by more than stall_tolerance_in
+    for stall_count consecutive samples AND speed is ~0, the gantry has settled
+    against static friction and we declare it arrived rather than looping forever.
+
     Returns (speeds, esc_samples, arrived).
     """
     speeds = []
     esc_samples = []
     arrived = False
     start = _time.monotonic()
+
+    # Stall detection state
+    _recent_pos = []   # last stall_count position readings
+    _stall_pos  = None
+    _stall_n    = 0
+
     try:
         while _time.monotonic() - start < timeout:
             line = g.read_log_line()
@@ -138,13 +149,29 @@ def _stream_log(g, stop_tags=('[GOTO] Arrived', '[GOTO] Aborted', '[ERR]'),
                 parts = line.split(',')
                 if len(parts) >= 6:
                     try:
-                        spd = float(parts[4])
-                        esc = int(parts[5])
+                        pos    = float(parts[1])
+                        tgt    = float(parts[2])
+                        spd    = float(parts[4])
+                        esc    = int(parts[5])
                         speeds.append(spd)
                         esc_samples.append((abs(spd), abs(esc - 1500)))
-                    except ValueError:
+
+                        # Stall detection: track whether position is stable
+                        if _stall_pos is None or abs(pos - _stall_pos) > stall_tolerance_in / 5:
+                            _stall_pos = pos
+                            _stall_n   = 1
+                        else:
+                            _stall_n += 1
+                            if _stall_n >= stall_count and abs(spd) < 0.15:
+                                err = abs(tgt - pos)
+                                print(f"  [STALL] Settled at {pos:.4f} in  "
+                                      f"(error: {err:.4f} in = {err * 2053.67:.0f} counts)")
+                                arrived = True
+                    except (ValueError, IndexError):
                         pass
                 print(f"  {line}")
+                if arrived:
+                    break
             else:
                 if line.startswith('['):
                     print(f"  {line}")
@@ -314,6 +341,7 @@ def main():
                 g._send(f"GOTO{inches:.4f}")
                 speeds, esc_samples, arrived = _stream_log(g)
                 g._send("LOG")
+                g._send("STOP")   # ensure motor is idle if we exited via stall
                 if _state['speed_ctrl']:
                     g._send("SPEEDON")   # restore if it was on
                 _analyse_speed(speeds, esc_samples, target_ips=_state['speed_ips'],

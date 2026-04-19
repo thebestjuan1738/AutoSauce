@@ -51,7 +51,7 @@ DEADBAND   = 15
 TARGET_SPEED_IPS_DEFAULT = 2.0
 SPEED_KP_DEFAULT         = 2.0
 MAX_SPEED_ESTIMATE       = 8.0
-MIN_PULSE_OFFSET         = 100
+MIN_PULSE_OFFSET         = 30
 RAMP_DISTANCE_INCHES     = 2.0
 MAX_SPEED_HARD_CAP       = 6.0   # hard cap — firmware never exceeds this in/s
 
