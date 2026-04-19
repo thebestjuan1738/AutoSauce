@@ -28,6 +28,13 @@ class ArduinoController:
     })
     # VID used by most VESC hardware — ports with this VID are never probed as Arduino.
     _VESC_VID = 0x0483   # STMicroelectronics
+    # Devices that are NOT the gripper/extruder Mega — never probe these.
+    #   10c4:ea60  CP210x UART Bridge → gantry NodeMCU
+    #   2341:0043  Arduino Uno R3     → conveyor belt
+    _SKIP_DEVICES = frozenset({
+        (0x10C4, 0xEA60),
+        (0x2341, 0x0043),
+    })
 
     @staticmethod
     def _candidate_ports() -> list:
@@ -49,6 +56,8 @@ class ArduinoController:
         for p in serial.tools.list_ports.comports():
             if p.vid == ArduinoController._VESC_VID:
                 continue  # skip VESC — never try it as an Arduino
+            if (p.vid, p.pid) in ArduinoController._SKIP_DEVICES:
+                continue  # skip gantry CP210x and conveyor Uno
             desc = (p.description or '').lower()
             if p.vid in ArduinoController._ARDUINO_VIDS:
                 by_vid.append(p.device)

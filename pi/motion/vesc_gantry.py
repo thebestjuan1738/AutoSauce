@@ -182,15 +182,11 @@ class VESCGantry:
         """
         Wait for the Arduino boot sequence to finish, then verify with POS.
 
-        The boot sequence takes ~10 s:
-          - 1.8 s LED blink test
-          - 5.0 s encoder rotation test
-          - 3.0 s ESC arming
-
-        Boot ends with a "-----..." separator immediately after the
-        "Counts/inch" stats line. That separator is used as the completion marker.
-        If the banner is not seen (e.g. Arduino already booted), falls through to
-        the POS verification directly.
+        Two cases:
+          - Fresh boot: banner sequence takes ~10 s. Detected by the
+            "Counts/inch" + "---" separator at the end of the banner.
+          - Already running: [STATUS] lines arrive immediately. Detected
+            within 2 s — skip the banner wait and go straight to POS verify.
 
         Raises RuntimeError if the Arduino doesn't respond within BOOT_TIMEOUT_S.
         """
@@ -199,6 +195,27 @@ class VESCGantry:
 
         deadline = time.monotonic() + BOOT_TIMEOUT_S
         counts_seen = False
+        # Quick check: if [STATUS] lines are already arriving the Arduino is
+        # already running — no need to wait for a banner that will never come.
+        quick_deadline = time.monotonic() + 2.0
+        while time.monotonic() < quick_deadline:
+            line = self._readline()
+            if not line:
+                continue
+            log.debug("VESCGantry boot: %s", line)
+            if '[STATUS]' in line:
+                log.info("VESCGantry: Arduino already running — skipping banner wait")
+                self._ser.reset_input_buffer()
+                self._send("POS")
+                deadline = time.monotonic() + 3.0
+                while time.monotonic() < deadline:
+                    line = self._readline()
+                    if '[POS]' in line:
+                        log.info("VESCGantry: boot check passed — %s", line)
+                        return
+                raise RuntimeError("VESCGantry: Arduino did not respond to POS command during boot check")
+
+        # Fresh boot path: wait for banner completion marker
         while time.monotonic() < deadline:
             line = self._readline()
             if not line:
