@@ -157,6 +157,14 @@ class VESCGantry:
         self._ser = serial.Serial(port, GANTRY_BAUD, timeout=0.5)
         self._position_mm = 0
         log.info("VESCGantry: connected")
+        # Pulse DTR low to reset the ESP8266 so setup() always runs fresh.
+        # This re-arms the ESC, which is required after any power cycle of the
+        # motor controller even if the ESP8266 stayed powered via USB.
+        log.info("VESCGantry: resetting ESP8266 via DTR pulse...")
+        self._ser.setDTR(False)
+        time.sleep(0.1)
+        self._ser.setDTR(True)
+        self._ser.reset_input_buffer()
 
     # ── Internal helpers ──────────────────────────────────────────────────────
 
