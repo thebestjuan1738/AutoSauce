@@ -1,26 +1,23 @@
 """
 vesc_gantry.py
 
-Gantry driver for the SauceBot — NEO rev brushless motor controlled by a VESC over USB serial.
+Gantry driver for the SauceBot — NodeMCU ESP8266 microcontroller over USB serial.
 Implements the move_to(position_mm) interface expected by OrderManager.
 
-Speaks the VESC serial protocol directly — no pyvesc dependency.
-Uses tachometer from COMM_GET_VALUES for closed-loop position control.
+The Arduino firmware (gantrymanualtestcode) handles closed-loop position control
+using an encoder and ESC on-board. Python sends plain ASCII commands and waits
+for tagged response lines.
 
-USB port auto-selects by OS:
-    Windows → COM4
-    Linux   → /dev/ttyACM0
+Wire protocol uses inches; this module converts transparently (1 in = 25.4 mm).
 
-Tune MAX_DUTY_GANTRY and TICKS_PER_MM once you've done a free-run calibration:
-  1. Position gantry at one end with 300+ mm of clear travel.
-  2. Run: python calibrate_gantry.py
-  3. Enter the measured distance each run until readings converge.
-  4. Paste the output values for TICKS_PER_MM and POSITION_TOLERANCE_TICKS here.
+USB port is auto-detected by probing CH340/FTDI/CP210x candidates for a [POS]
+response. Falls back to GANTRY_PORT if auto-detection fails.
 
-Current calibration: 3.67 ticks/mm (runs 2–3 average, April 2026).
+Tune TRAVEL_SPEED_IPS and SWEEP_SPEED_IPS after verifying motion on hardware:
+  - TRAVEL_SPEED_IPS: normal point-to-point speed (in/s, max 6.0 on Arduino)
+  - SWEEP_SPEED_IPS:  slow speed during sauce dispense sweep (in/s)
 """
 
-import struct
 import sys
 import time
 import serial
@@ -30,453 +27,279 @@ from pi.utils.logger import log
 
 # ─── Config ───────────────────────────────────────────────────────────────────
 
-VESC_GANTRY_PORT = "COM4"          if sys.platform == "win32" else "/dev/ttyACM0"
-VESC_GANTRY_BAUD = 115200
+# Fallback port used if auto-detection finds no gantry firmware.
+GANTRY_PORT = "COM3" if sys.platform == "win32" else "/dev/ttyUSB0"
+GANTRY_BAUD = 115200
 
-# Map speed 0–100 → duty 0.0–MAX_DUTY.
-MAX_DUTY_GANTRY  = 0.4           # 70% duty ceiling — raise only after verifying mechanics
-# Minimum duty applied even at low speeds — needed to overcome sticky/noisy sections.
-MIN_DUTY_GANTRY  = 0.0     # never go below this when the motor is running
-# Duty ceiling used during the dispense sweep so the gantry moves slowly
-# while sauce is being applied.  Must be >= MIN_DUTY_GANTRY or the motor
-# won't turn and the stall kick will fire at full duty instead.
-# 0.51 = just 2% above the minimum — slowest reliable continuous motion.
-# The accel ramp starts at MIN_DUTY (not 0), so no stall kick fires on sweep start.
-SWEEP_MAX_DUTY   = 0.51
-# Speed used for move_to() calls (0–100 abstract units).
-# 80 × 0.5 = 0.40 effective duty — enough torque to drive a loaded gantry.
-TRAVEL_SPEED = 80
+# Normal point-to-point move speed (inches per second).
+TRAVEL_SPEED_IPS = 1.5
 
-# Calibrated: average of runs 2–3 from calibrate_gantry.py (3.56, 3.78 ticks/mm).
-TICKS_PER_MM = 3.67               # encoder ticks per mm of belt travel
+# Slow speed used during the sauce dispense sweep (inches per second).
+SWEEP_SPEED_IPS = 0.5
 
-# How close (in ticks) counts as "arrived".
-# 3.67 × 2 ≈ 7 ticks = ±1.9 mm
-POSITION_TOLERANCE_TICKS = 7
+# Sentinel value imported by order_manager.py — pass as max_duty=SWEEP_MAX_DUTY
+# to move_to() to select SWEEP_SPEED_IPS instead of TRAVEL_SPEED_IPS.
+SWEEP_MAX_DUTY = 0.51   # kept for backward compatibility with order_manager
 
-# Raise TimeoutError if the gantry doesn't reach the target within this many seconds.
+# Raise TimeoutError if a move doesn't complete within this many seconds.
 TRAVEL_TIMEOUT_S = 30
 
-# Startup accel ramp — duty rises linearly from 0 → P-controlled value over this
-# many seconds.  Keeps the torque increase gradual so the gantry doesn't lurch.
-# Raise ACCEL_RAMP_S if jitter persists; lower it if the start feels too slow.
-ACCEL_RAMP_S = 0.25 # seconds to ramp from 0 to full duty on move start
+# Time to wait for the Arduino boot sequence (LED test + 5 s encoder test + ESC arming).
+BOOT_TIMEOUT_S = 20.0
 
-# Deceleration zone — duty ramps from MAX_DUTY_GANTRY down to MIN_DUTY_GANTRY
-# over the last DECEL_ZONE_MM of travel.
-DECEL_ZONE_MM = 50   # mm before target where ramp begins
-
-# Static-friction break — a brief full-duty surge fired once at move start to
-# overcome stiction before the normal accel ramp takes over.
-STATIC_BREAK_DUTY = MAX_DUTY_GANTRY   # duty during the surge (0.0 to disable)
-STATIC_BREAK_S    = 0.25              # duration of the surge in seconds
-
-# Stall detection — if tachometer doesn't advance for this long, fire a torque kick.
-STALL_DETECT_S   = 0.6   # seconds of no progress before a kick
-STALL_KICK_DUTY  = MAX_DUTY_GANTRY   # kick at the duty ceiling (0.70)
-STALL_KICK_S     = 0.35  # how long to hold the kick
-STALL_MAX_KICKS  = 3     # give up after this many failed kicks
-
-# USB VID/PID used to identify the VESC regardless of plug-in order.
-# Run `python -m serial.tools.list_ports -v` to verify your device's VID and PID.
-# VESC 4.x / 6.x on STM32 hardware is typically VID=0x0483, PID=0x5740.
+# USB VID of the VESC — always skipped when scanning for the gantry Arduino.
 _VESC_VID = 0x0483   # STMicroelectronics
-_VESC_PID = 0x5740   # USB Serial (CDC)
 
-# VESC command IDs
-_COMM_GET_VALUES  = 4
-_COMM_SET_DUTY    = 5
-_COMM_SET_CURRENT = 6
-
-# Boot-check safety thresholds
-_MIN_VIN_V      = 8.0    # below this → battery dead / not connected
-_MAX_VIN_V      = 65.0   # above this → over-voltage
-_MAX_FET_TEMP_C = 80.0   # MOSFET too hot to start
-_MAX_MOT_TEMP_C = 100.0  # motor too hot to start (if sensor fitted)
-_MAX_IDLE_RPM   = 100    # motor should be stationary at boot
-
-_FAULT_NAMES = {
-    0: "NONE",
-    1: "OVER_VOLTAGE",
-    2: "UNDER_VOLTAGE",
-    3: "DRV",
-    4: "ABS_OVER_CURRENT",
-    5: "OVER_TEMP_FET",
-    6: "OVER_TEMP_MOTOR",
-}
+# VIDs and description substrings associated with NodeMCU / Arduino clones.
+_ARDUINO_VIDS = frozenset({
+    0x2341,  # Arduino SA
+    0x2A03,  # Arduino SRL
+    0x1A86,  # WCH CH340 / CH341 (NodeMCU, WeMos, clones)
+    0x0403,  # FTDI FT232
+    0x10C4,  # Silicon Labs CP210x
+})
+_ARDUINO_KEYWORDS = ('arduino', 'ch340', 'ch341', 'ftdi', 'usb serial', 'cp210')
 
 
-# ─── VESC packet helpers ──────────────────────────────────────────────────────
+# ─── Port detection ───────────────────────────────────────────────────────────
 
-def _crc16_ccitt(data: bytes) -> int:
-    """CRC-CCITT (XModem, poly=0x1021, init=0x0000)."""
-    crc = 0x0000
-    for byte in data:
-        crc ^= byte << 8
-        for _ in range(8):
-            if crc & 0x8000:
-                crc = (crc << 1) ^ 0x1021
-            else:
-                crc <<= 1
-            crc &= 0xFFFF
-    return crc
-
-
-def _build_packet(payload: bytes) -> bytes:
-    """Wrap payload in a VESC short-frame packet."""
-    crc = _crc16_ccitt(payload)
-    return bytes([0x02, len(payload)]) + payload + bytes([crc >> 8, crc & 0xFF, 0x03])
-
-
-def _packet_set_duty(duty: float) -> bytes:
-    """COMM_SET_DUTY: duty ∈ [-1.0, 1.0] → int32 scaled by 1e5."""
-    value = int(duty * 100_000)
-    return _build_packet(bytes([_COMM_SET_DUTY]) + struct.pack('>i', value))
-
-
-def _packet_set_current(amps: float) -> bytes:
-    """COMM_SET_CURRENT: amps → int32 scaled by 1e3."""
-    value = int(amps * 1000)
-    return _build_packet(bytes([_COMM_SET_CURRENT]) + struct.pack('>i', value))
-
-
-def _packet_get_values() -> bytes:
-    """COMM_GET_VALUES: no arguments — requests full telemetry from VESC."""
-    return _build_packet(bytes([_COMM_GET_VALUES]))
-
-
-def _read_packet(ser: serial.Serial) -> bytes:
-    """Read one VESC response frame and return the validated payload."""
-    start = ser.read(1)
-    if not start:
-        raise RuntimeError("VESC did not respond (timeout during boot check)")
-    if start[0] == 0x02:                          # short frame
-        length = ser.read(1)[0]
-    elif start[0] == 0x03:                        # long frame
-        hi, lo = ser.read(1)[0], ser.read(1)[0]
-        length = (hi << 8) | lo
-    else:
-        raise RuntimeError(f"Unexpected VESC start byte: 0x{start[0]:02X}")
-
-    payload   = ser.read(length)
-    crc_bytes = ser.read(2)
-    end       = ser.read(1)
-
-    if len(payload) != length:
-        raise RuntimeError("VESC response truncated")
-    if not end or end[0] != 0x03:
-        raise RuntimeError("VESC packet missing end byte")
-
-    crc_rx   = (crc_bytes[0] << 8) | crc_bytes[1]
-    crc_calc = _crc16_ccitt(payload)
-    if crc_rx != crc_calc:
-        raise RuntimeError(f"VESC CRC mismatch: rx=0x{crc_rx:04X} calc=0x{crc_calc:04X}")
-
-    return payload
-
-
-def _parse_get_values(payload: bytes) -> dict:
+def _find_gantry_port() -> str:
     """
-    Parse a COMM_GET_VALUES response payload (starts with command byte).
-    Returns a dict of human-readable telemetry values.
-
-    VESC firmware response layout (big-endian, after command byte):
-        int16  temp_fet        / 10  → °C
-        int16  temp_motor      / 10  → °C
-        int32  avg_motor_curr  / 100 → A
-        int32  avg_input_curr  / 100 → A
-        int32  avg_id          / 100 → A
-        int32  avg_iq          / 100 → A
-        int16  duty_cycle      / 1000
-        int32  rpm
-        int16  v_in            / 10  → V
-        int32  amp_hours       / 10000
-        int32  amp_hours_chg   / 10000
-        int32  watt_hours      / 10000
-        int32  watt_hours_chg  / 10000
-        int32  tachometer
-        int32  tachometer_abs
-        uint8  fault_code
+    Scan serial ports for the gantry Arduino. Sends POS to each candidate and
+    looks for a [POS] response to confirm gantry firmware. Skips the VESC VID.
+    Falls back to GANTRY_PORT if no matching port is found.
     """
-    # skip leading command byte
-    data = payload[1:]
-    if len(data) < 53:
-        raise RuntimeError(f"COMM_GET_VALUES response too short: {len(data)} bytes")
-
-    (
-        raw_temp_fet, raw_temp_mot,
-        raw_motor_curr, raw_input_curr, raw_id, raw_iq,
-        raw_duty, raw_rpm,
-        raw_vin,
-        _ah, _ahc, _wh, _whc,
-        _tach, tach_abs,
-        fault,
-    ) = struct.unpack_from('>hhiiiihihiiiiiiB', data)
-
-    return {
-        "temp_fet_c":      raw_temp_fet   / 10.0,
-        "temp_motor_c":    raw_temp_mot   / 10.0,
-        "motor_current_a": raw_motor_curr / 100.0,
-        "input_current_a": raw_input_curr / 100.0,
-        "duty_cycle":      raw_duty       / 1000.0,
-        "rpm":             raw_rpm,
-        "v_in":            raw_vin        / 10.0,
-        "tachometer":      _tach,
-        "tachometer_abs":  tach_abs,
-        "fault_code":      fault,
-        "fault_name":      _FAULT_NAMES.get(fault, f"UNKNOWN({fault})"),
-    }
-
-
-def _find_vesc_port() -> str:
-    """
-    Scan serial ports for the VESC by USB VID/PID so it is found regardless of
-    USB hub plug-in order.  Falls back to VESC_GANTRY_PORT if no match is found.
-    Run `python -m serial.tools.list_ports -v` to verify _VESC_VID / _VESC_PID.
-    """
+    candidates = []
     for p in serial.tools.list_ports.comports():
-        if p.vid == _VESC_VID and p.pid == _VESC_PID:
-            log.info("VESCGantry: matched VESC on %s (%s)", p.device, p.description)
-            return p.device
-    log.warning(
-        "VESCGantry: no port matched VID=0x%04X PID=0x%04X — falling back to %s",
-        _VESC_VID, _VESC_PID, VESC_GANTRY_PORT,
-    )
-    return VESC_GANTRY_PORT
+        if p.vid == _VESC_VID:
+            continue
+        desc = (p.description or '').lower()
+        if p.vid in _ARDUINO_VIDS or any(k in desc for k in _ARDUINO_KEYWORDS):
+            candidates.append(p.device)
+
+    def _num(name: str) -> int:
+        digits = ''.join(c for c in name if c.isdigit())
+        return int(digits) if digits else 999
+
+    for port_name in sorted(candidates, key=_num):
+        try:
+            probe = serial.Serial(port_name, GANTRY_BAUD, timeout=2)
+            time.sleep(0.1)
+            probe.reset_input_buffer()
+            probe.write(b'POS\n')
+            probe.flush()
+            deadline = time.time() + 2.0
+            while time.time() < deadline:
+                if probe.in_waiting:
+                    line = probe.readline().decode('utf-8', errors='ignore').strip()
+                    if '[POS]' in line:
+                        log.info("VESCGantry: found gantry firmware on %s", port_name)
+                        probe.close()
+                        return port_name
+            probe.close()
+        except Exception as exc:
+            log.debug("VESCGantry: probe failed on %s: %s", port_name, exc)
+
+    log.warning("VESCGantry: auto-detect failed — using %s", GANTRY_PORT)
+    return GANTRY_PORT
 
 
 # ─── Driver ───────────────────────────────────────────────────────────────────
 
 class VESCGantry:
     """
-    Controls the NEO rev gantry belt motor via VESC over USB.
-    Opened once at construction; connection is reused for the lifetime of the process.
+    Controls the gantry belt motor via an Arduino-based ESC controller over USB.
+
+    The Arduino firmware handles encoder-based closed-loop position control
+    internally. Python sends ASCII commands and reads tagged response lines.
+
+    Unit conversion: mm (Python API) <-> inches (Arduino wire protocol).
 
     move_to() is the primary interface used by OrderManager.
-    start() / reverse() / stop() are available for manual jog or calibration.
+    home() runs the homing routine (ZERO) on the Arduino.
+    start() / reverse() / stop() are available for manual jog.
     """
 
     def __init__(self):
-        port = _find_vesc_port()
-        log.info("VESCGantry: connecting to %s @ %d baud", port, VESC_GANTRY_BAUD)
-        self._ser = serial.Serial(port, VESC_GANTRY_BAUD, timeout=1)
-        # Assumes the gantry is physically at the dock (0 mm) when the program starts.
+        port = _find_gantry_port()
+        log.info("VESCGantry: connecting to %s @ %d baud", port, GANTRY_BAUD)
+        self._ser = serial.Serial(port, GANTRY_BAUD, timeout=0.5)
         self._position_mm = 0
         log.info("VESCGantry: connected")
 
+    # ── Internal helpers ──────────────────────────────────────────────────────
+
+    def _send(self, cmd: str) -> None:
+        """Write a newline-terminated command to the Arduino."""
+        self._ser.write(f"{cmd}\n".encode('utf-8'))
+        self._ser.flush()
+        log.debug("VESCGantry → %s", cmd)
+
+    def _readline(self) -> str:
+        """
+        Read one line from the Arduino. Returns '' on timeout (0.5 s per call,
+        set by the serial port timeout in __init__).
+        """
+        try:
+            return self._ser.readline().decode('utf-8', errors='ignore').strip()
+        except Exception:
+            return ''
+
+    # ── Public interface ──────────────────────────────────────────────────────
+
     def boot_check(self) -> None:
         """
-        Request telemetry from the VESC and verify the motor is safe to run.
-        Raises RuntimeError with a clear message if any check fails.
-        Called once at startup before accepting orders.
+        Wait for the Arduino boot sequence to finish, then verify with POS.
+
+        The boot sequence takes ~10 s:
+          - 1.8 s LED blink test
+          - 5.0 s encoder rotation test
+          - 3.0 s ESC arming
+
+        Boot ends with a "-----..." separator immediately after the
+        "Counts/inch" stats line. That separator is used as the completion marker.
+        If the banner is not seen (e.g. Arduino already booted), falls through to
+        the POS verification directly.
+
+        Raises RuntimeError if the Arduino doesn't respond within BOOT_TIMEOUT_S.
         """
-        log.info("VESCGantry: running boot check...")
+        log.info("VESCGantry: waiting for Arduino boot...")
         self._ser.reset_input_buffer()
-        self._ser.write(_packet_get_values())
 
-        payload = _read_packet(self._ser)
-        v = _parse_get_values(payload)
+        deadline = time.monotonic() + BOOT_TIMEOUT_S
+        counts_seen = False
+        while time.monotonic() < deadline:
+            line = self._readline()
+            if not line:
+                continue
+            log.debug("VESCGantry boot: %s", line)
+            if 'Counts/inch' in line:
+                counts_seen = True
+            elif counts_seen and line.startswith('---'):
+                log.info("VESCGantry: boot banner complete")
+                break
 
-        log.info(
-            "VESCGantry: telemetry — VIN=%.1fV  FET=%.1f°C  MOT=%.1f°C  "
-            "RPM=%d  duty=%.3f  fault=%s",
-            v["v_in"], v["temp_fet_c"], v["temp_motor_c"],
-            v["rpm"], v["duty_cycle"], v["fault_name"],
+        # Verify two-way comms with a POS query
+        self._ser.reset_input_buffer()
+        self._send("POS")
+        deadline = time.monotonic() + 3.0
+        while time.monotonic() < deadline:
+            line = self._readline()
+            if '[POS]' in line:
+                log.info("VESCGantry: boot check passed — %s", line)
+                return
+            if '[ERR]' in line:
+                raise RuntimeError(f"VESCGantry boot check error: {line}")
+
+        raise RuntimeError(
+            "VESCGantry: Arduino did not respond to POS command during boot check"
         )
 
-        errors = []
-        if v["fault_code"] != 0:
-            errors.append(f"active fault: {v['fault_name']}")
-        if v["v_in"] < _MIN_VIN_V:
-            errors.append(f"input voltage too low: {v['v_in']:.1f}V (min {_MIN_VIN_V}V)")
-        if v["v_in"] > _MAX_VIN_V:
-            errors.append(f"input voltage too high: {v['v_in']:.1f}V (max {_MAX_VIN_V}V)")
-        if v["temp_fet_c"] > _MAX_FET_TEMP_C:
-            errors.append(f"FET temperature too high: {v['temp_fet_c']:.1f}°C (max {_MAX_FET_TEMP_C}°C)")
-        if v["temp_motor_c"] > _MAX_MOT_TEMP_C:
-            errors.append(f"motor temperature too high: {v['temp_motor_c']:.1f}°C (max {_MAX_MOT_TEMP_C}°C)")
-        if abs(v["rpm"]) > _MAX_IDLE_RPM:
-            errors.append(f"motor already spinning at boot: {v['rpm']} RPM")
-
-        if errors:
-            raise RuntimeError("VESCGantry boot check FAILED:\n  " + "\n  ".join(errors))
-
-        log.info("VESCGantry: boot check passed ✓")
-
-    def _get_encoder_position(self) -> int:
-        """Request telemetry and return the signed tachometer tick count."""
+    def home(self) -> None:
+        """
+        Run the homing routine (ZERO command). Reverses to the limit switch,
+        zeros the encoder, then confirms exact zero. Blocks until complete.
+        Raises RuntimeError on failure or timeout (60 s).
+        """
+        log.info("VESCGantry: starting homing routine (ZERO)...")
         self._ser.reset_input_buffer()
-        self._ser.write(_packet_get_values())
-        payload = _read_packet(self._ser)
-        return _parse_get_values(payload)["tachometer"]
+        self._send("ZERO")
+        deadline = time.monotonic() + 60.0
+        while time.monotonic() < deadline:
+            line = self._readline()
+            if not line:
+                continue
+            log.debug("VESCGantry homing: %s", line)
+            if "[ZERO] Ready." in line:
+                self._position_mm = 0
+                log.info("VESCGantry: homing complete, position = 0 mm")
+                return
+            if "[ZERO]" in line and "ERROR" in line:
+                raise RuntimeError(f"VESCGantry homing failed: {line}")
 
-    def calibrate(self, duration_s: float = 5.0) -> None:
+        raise RuntimeError("VESCGantry: homing timed out after 60 s")
+
+    def get_position_mm(self) -> float:
         """
-        Calibration utility — measures TICKS_PER_MM for your belt/pulley.
-
-        Usage (run once from a Python shell or a throw-away script):
-            from pi.motion.vesc_gantry import VESCGantry
-            g = VESCGantry()
-            g.boot_check()
-            g.calibrate(duration_s=5)
-            # then measure how far the carriage physically moved and set:
-            # TICKS_PER_MM = printed_ticks / actual_mm
-            # POSITION_TOLERANCE_TICKS = round(TICKS_PER_MM * 2)  # ±2 mm
-
-        Ensure at least 300 mm of clear travel before calling.
+        Query the Arduino for its current encoder position and return it in mm.
+        Parses the [POS] X.XXX in (...) response line.
         """
-        log.info("VESCGantry calibrate: running %.1fs at speed=%d...", duration_s, TRAVEL_SPEED)
-        t_start = self._get_encoder_position()
-        self.start(TRAVEL_SPEED)
-        time.sleep(duration_s)
-        self.stop()
-        t_end = self._get_encoder_position()
-        delta = abs(t_end - t_start)
-        log.info(
-            "VESCGantry calibrate: %d ticks in %.1fs",
-            delta, duration_s,
-        )
-        print(f"\nCalibration result: {delta} ticks in {duration_s}s")
-        print(f"Measure how far the carriage moved, then set:")
-        print(f"    TICKS_PER_MM = {delta} / <actual_mm_travelled>")
-        print(f"    POSITION_TOLERANCE_TICKS = round(TICKS_PER_MM * 2)  # ±2 mm")
+        self._ser.reset_input_buffer()
+        self._send("POS")
+        deadline = time.monotonic() + 2.0
+        while time.monotonic() < deadline:
+            line = self._readline()
+            if '[POS]' in line:
+                # Format: [POS] X.XXX in (counts) | Speed: ...
+                try:
+                    pos_in = float(line.split()[1])
+                    return pos_in * 25.4
+                except (IndexError, ValueError):
+                    pass
+        log.warning("VESCGantry: could not read position, returning cached value")
+        return float(self._position_mm)
 
-    def _p_duty(self, ticks_remaining: int, delta_ticks: int, max_duty: float = MAX_DUTY_GANTRY) -> float:
+    def move_to(self, position_mm: int, max_duty: float = 1.0) -> None:
         """
-        Decel ramp: cruise at max_duty then taper to MIN_DUTY over the last
-        DECEL_ZONE_MM.  Short moves use the full delta as the zone so they
-        don't stall on small hops.  Pass max_duty=SWEEP_MAX_DUTY for slow travel.
-        """
-        decel_zone_ticks = int(DECEL_ZONE_MM * TICKS_PER_MM)
-        effective_zone   = min(decel_zone_ticks, delta_ticks) or 1
-        if ticks_remaining >= effective_zone:
-            return max_duty
-        ramp = ticks_remaining / effective_zone          # 1.0 → 0.0 as target approaches
-        return MIN_DUTY_GANTRY + ramp * (max_duty - MIN_DUTY_GANTRY)
+        Closed-loop move to position_mm from the dock end of the rail.
+        Sends a GOTO command to the Arduino which manages encoder-based control.
 
-    def move_to(self, position_mm: int, max_duty: float = MAX_DUTY_GANTRY) -> None:
-        """
-        Closed-loop move to position_mm (from the dock end of the rail).
-        Polls tachometer at 20 Hz until within POSITION_TOLERANCE_TICKS.
-        Pass max_duty=SWEEP_MAX_DUTY for a slow dispense sweep.
+        Pass max_duty=SWEEP_MAX_DUTY for the slow sauce dispense sweep — this
+        sets SWEEP_SPEED_IPS on the Arduino instead of TRAVEL_SPEED_IPS.
 
-        Calibrate TICKS_PER_MM at the top of this file — see module docstring.
+        Raises TimeoutError if the move doesn't complete within TRAVEL_TIMEOUT_S.
+        Raises RuntimeError on Arduino-reported errors or limit conditions.
         """
         if position_mm == self._position_mm:
             return
 
-        delta_mm    = position_mm - self._position_mm
-        delta_ticks = int(abs(delta_mm) * TICKS_PER_MM)
-        direction   = 1 if delta_mm > 0 else -1
-
-        start_ticks = self._get_encoder_position()
+        speed_ips  = SWEEP_SPEED_IPS if max_duty <= SWEEP_MAX_DUTY else TRAVEL_SPEED_IPS
+        position_in = position_mm / 25.4
 
         log.info(
-            "VESCGantry: move_to %dmm  (from %dmm, Δ%+d ticks needed)",
-            position_mm, self._position_mm, direction * delta_ticks,
+            "VESCGantry: move_to %d mm (%.4f in) at %.2f in/s",
+            position_mm, position_in, speed_ips,
         )
 
-        # Static-friction break — short full-duty burst before the accel ramp starts.
-        if STATIC_BREAK_DUTY > 0:
-            log.debug("VESCGantry: static-friction break at duty=%.2f for %.3fs",
-                      STATIC_BREAK_DUTY, STATIC_BREAK_S)
-            self._ser.write(_packet_set_duty(-direction * STATIC_BREAK_DUTY))
-            time.sleep(STATIC_BREAK_S)
+        self._ser.reset_input_buffer()
+        # Set speed, then clear the [SPEED] acknowledgement before issuing GOTO
+        self._send(f"SPEED{speed_ips:.2f}")
+        time.sleep(0.05)
+        self._ser.reset_input_buffer()
+        self._send(f"GOTO{position_in:.4f}")
 
-        deadline        = time.monotonic() + TRAVEL_TIMEOUT_S
-        move_start      = time.monotonic()   # used for time-based accel ramp
-        last_tick_time  = time.monotonic()
-        last_ticks_seen = start_ticks
-        kicks           = 0
+        deadline = time.monotonic() + TRAVEL_TIMEOUT_S
+        while time.monotonic() < deadline:
+            line = self._readline()
+            if not line:
+                continue
+            log.debug("VESCGantry move: %s", line)
+            if "[GOTO] Arrived at" in line:
+                self._position_mm = position_mm
+                log.info("VESCGantry: arrived at %d mm", position_mm)
+                return
+            if "[GOTO] Aborted" in line:
+                raise RuntimeError(f"VESCGantry move aborted: {line}")
+            if "[ERR]" in line:
+                raise RuntimeError(f"VESCGantry move error: {line}")
 
-        log_interval  = 0.5   # seconds between position log lines
-        last_log_time = 0.0
-
-        while True:
-            # tachometer is signed — measure net distance travelled from start
-            current_ticks   = self._get_encoder_position()
-            ticks_travelled = abs(current_ticks - start_ticks)
-            ticks_remaining = delta_ticks - ticks_travelled
-
-            if ticks_remaining <= POSITION_TOLERANCE_TICKS:
-                break
-
-            if time.monotonic() > deadline:
-                self.stop()
-                actual_mm = int(ticks_travelled / TICKS_PER_MM)
-                self._position_mm += direction * actual_mm
-                raise TimeoutError(
-                    f"VESCGantry timed out after {TRAVEL_TIMEOUT_S}s "
-                    f"moving to {position_mm}mm "
-                    f"(~{int(ticks_remaining / TICKS_PER_MM)}mm remaining)"
-                )
-
-            # ── Accel (time) + decel (position) ramp ─────────────────────
-            # Ramp from MIN_DUTY → p_duty over ACCEL_RAMP_S.
-            # Starting from MIN_DUTY (not 0) means the motor moves immediately,
-            # so position tracking is never lost to a zero-duty stall at move start.
-            time_factor = min(1.0, (time.monotonic() - move_start) / ACCEL_RAMP_S)
-            p_duty = self._p_duty(ticks_remaining, delta_ticks, max_duty)
-            duty = MIN_DUTY_GANTRY + time_factor * (p_duty - MIN_DUTY_GANTRY)
-            self._ser.write(_packet_set_duty(-direction * duty))
-
-            now = time.monotonic()
-            if now - last_log_time >= log_interval:
-                current_mm = self._position_mm + direction * int(ticks_travelled / TICKS_PER_MM)
-                log.debug(
-                    "VESCGantry: pos=%dmm  ticks=%d/%d  remaining=%dmm  duty=%.3f  tf=%.2f",
-                    current_mm, ticks_travelled, delta_ticks,
-                    int(ticks_remaining / TICKS_PER_MM), duty, time_factor,
-                )
-                last_log_time = now
-
-            # Stall detection — no tachometer progress for STALL_DETECT_S
-            if current_ticks != last_ticks_seen:
-                last_ticks_seen = current_ticks
-                last_tick_time  = time.monotonic()
-            elif time.monotonic() - last_tick_time > STALL_DETECT_S:
-                kicks += 1
-                if kicks > STALL_MAX_KICKS:
-                    self.stop()
-                    actual_mm = int(ticks_travelled / TICKS_PER_MM)
-                    self._position_mm += direction * actual_mm
-                    raise RuntimeError(
-                        f"VESCGantry stalled at ~{self._position_mm}mm after "
-                        f"{STALL_MAX_KICKS} torque kicks — check for obstruction"
-                    )
-                log.warning(
-                    "VESCGantry: stall detected (%d/%d) — torque kick at duty=%.2f",
-                    kicks, STALL_MAX_KICKS, STALL_KICK_DUTY,
-                )
-                # Brief high-duty kick to break through the sticky section
-                kick_duty = STALL_KICK_DUTY if direction > 0 else -STALL_KICK_DUTY
-                self._ser.write(_packet_set_duty(-kick_duty))
-                time.sleep(STALL_KICK_S)
-                last_tick_time = time.monotonic()  # reset stall clock; P ramp resumes next iter
-            time.sleep(0.05)  # poll at 20 Hz
-
-        self.stop()
-        self._position_mm = position_mm
-        log.info("VESCGantry: arrived at %dmm", position_mm)
+        raise TimeoutError(
+            f"VESCGantry timed out after {TRAVEL_TIMEOUT_S}s moving to {position_mm}mm"
+        )
 
     def start(self, speed: int) -> None:
-        """
-        Drive the gantry forward (away from dock).
-        speed: 0–100 abstract unit.
-        """
-        duty = (max(0, min(100, speed)) / 100.0) * MAX_DUTY_GANTRY
-        duty = max(duty, MIN_DUTY_GANTRY)
-        log.info("VESCGantry: forward  speed=%d → duty=%.3f", speed, -duty)
-        self._ser.write(_packet_set_duty(-duty))
+        """Drive the gantry forward (away from dock). speed: 0–100."""
+        power = max(0, min(100, speed))
+        log.info("VESCGantry: forward speed=%d", power)
+        self._send(f"FWD{power}")
 
     def reverse(self, speed: int) -> None:
-        """Drive the gantry backward (toward dock)."""
-        duty = (max(0, min(100, speed)) / 100.0) * MAX_DUTY_GANTRY
-        duty = max(duty, MIN_DUTY_GANTRY)
-        log.info("VESCGantry: reverse  speed=%d → duty=%.3f", speed, duty)
-        self._ser.write(_packet_set_duty(duty))
+        """Drive the gantry backward (toward dock). speed: 0–100."""
+        power = max(0, min(100, speed))
+        log.info("VESCGantry: reverse speed=%d", power)
+        self._send(f"REV{power}")
 
     def stop(self) -> None:
-        """Release motor current — gantry coasts to a stop."""
+        """Stop the gantry motor immediately."""
         log.info("VESCGantry: stop")
-        self._ser.write(_packet_set_current(0.0))
+        self._send("STOP")
