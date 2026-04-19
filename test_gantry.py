@@ -23,7 +23,7 @@ def main():
     print(f"Connected. Current position (unzeroed): {g.get_position_mm():.1f} mm\n")
 
     print("Homing gantry (reversing to limit switch)...")
-    g.home()
+    #g.home()
     print(f"Home complete. Position: {g.get_position_mm():.1f} mm\n")
 
     print("Enter a target position in mm (0–342), or 'q' to quit.")
