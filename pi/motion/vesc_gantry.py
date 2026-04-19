@@ -56,6 +56,14 @@ _VESC_VID = 0x0483   # STMicroelectronics
 _GANTRY_VID = 0x10C4
 _GANTRY_PID = 0xEA60
 
+# Known non-gantry devices on the same USB hub — never probed as gantry candidates.
+#   2a03:0042  Arduino Mega 2560 Rev3  → gripper / extruder (ArduinoController)
+#   2341:0043  Arduino Uno R3          → conveyor belt (GPIOConveyor)
+_SKIP_DEVICES = frozenset({
+    (0x2A03, 0x0042),
+    (0x2341, 0x0043),
+})
+
 # VIDs and description substrings associated with NodeMCU / Arduino clones.
 # Used as fallback candidates if the exact VID+PID match above fails.
 _ARDUINO_VIDS = frozenset({
@@ -91,6 +99,8 @@ def _find_gantry_port() -> str:
     for p in all_ports:
         if p.vid == _VESC_VID:
             continue
+        if (p.vid, p.pid) in _SKIP_DEVICES:
+            continue   # Mega (gripper/extruder) or Uno (conveyor) — not the gantry
         if p.vid == _GANTRY_VID and p.pid == _GANTRY_PID:
             priority.append(p.device)
             continue
