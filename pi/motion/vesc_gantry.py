@@ -279,7 +279,11 @@ class VESCGantry:
                     log.info("VESCGantry: boot check passed — %s", line)
                     # Auto-home the gantry after successful boot check
                     log.info("VESCGantry: auto-homing on startup...")
-                    self.home()
+                    try:
+                        self.home()
+                    except RuntimeError as e:
+                        log.warning("VESCGantry: auto-home failed (%s) — continuing without homing", e)
+                        log.warning("VESCGantry: gantry position may be unknown until manually homed")
                     return
                 if '[ERR]' in line:
                     raise RuntimeError(f"VESCGantry boot check error: {line}")
