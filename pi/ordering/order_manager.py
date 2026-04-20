@@ -250,7 +250,6 @@ class OrderManager:
 
         # Start extruder dispensing (always slow)
         self._extruder.dispense(speed=extruder_speed)
-        time.sleep(0.2)
 
         # Schedule extruder stop slightly before the gantry reaches its end position
         # so sauce doesn't over-run past the hotdog.
