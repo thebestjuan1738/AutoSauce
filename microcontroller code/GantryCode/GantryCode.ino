@@ -49,7 +49,6 @@ float maxMoveSpeed           = 999;
 float desiredSpeedSetpoint   = 0.0;
 #define MIN_PULSE_OFFSET     30
 #define POS_DEADBAND         50
-#define SPD_CLAMP_DEFAULT    80
 
 // ---- Homing ----
 #define HOME_PHASE1_POWER    5
@@ -186,7 +185,6 @@ void setup() {
   Serial.println("  SKP<val>      Set speed Kp       e.g. SKP3.0");
   Serial.println("  SKI<val>      Set speed Ki       e.g. SKI2.0");
   Serial.println("  SKD<val>      Set speed Kd       e.g. SKD0.0");
-  Serial.println("  CLAMP<val>    Set speed clamp    e.g. CLAMP80");
   Serial.println("  SINT<ms>      Status interval    e.g. SINT100");
   Serial.println("  LOG           Toggle live data stream");
   Serial.println("  STOP / S      Stop motor");
@@ -211,7 +209,6 @@ void setup() {
 // =============================================================
 
 unsigned long lastPrint = 0;
-int spdClamp = SPD_CLAMP_DEFAULT;
 
 void loop() {
 
@@ -406,7 +403,6 @@ void loop() {
                             + spd_Ki * spd_integral
                             + spd_Kd * spd_derivative;
 
-            spdOutput = constrain(spdOutput, -spdClamp, spdClamp);
 
             if (abs(spdOutput) < MIN_PULSE_OFFSET
                 && abs(posError) > POS_DEADBAND
@@ -596,11 +592,6 @@ void loop() {
       spd_Kd = cmd.substring(3).toFloat();
       Serial.print("[SPD PID] Kd = "); Serial.println(spd_Kd, 4);
 
-    } else if (cmd.startsWith("CLAMP")) {
-      spdClamp = cmd.substring(5).toInt();
-      spdClamp = constrain(spdClamp, 10, 500);
-      Serial.print("[SPD PID] Clamp = "); Serial.println(spdClamp);
-
     } else if (cmd.startsWith("SINT")) {
       statusInterval = cmd.substring(4).toInt();
       statusInterval = constrain(statusInterval, 50, 5000);
@@ -688,7 +679,6 @@ void loop() {
       Serial.print("  Forward        : "); Serial.println(forwardBlocked ? "BLOCKED" : "allowed");
       Serial.print("  Reverse        : "); Serial.println(limitTriggered ? "BLOCKED" : "allowed");
       Serial.print("  ESC pulse      : "); Serial.print(currentPulse); Serial.println("us");
-      Serial.print("  Spd clamp      : "); Serial.println(spdClamp);
       Serial.print("  Min pulse off  : "); Serial.println(MIN_PULSE_OFFSET);
       Serial.print("  Status intv    : "); Serial.print(statusInterval); Serial.println("ms");
       Serial.println("  --- Position PID ---");
@@ -711,7 +701,6 @@ void loop() {
       Serial.println("  SLIM<in>      Set soft limit");
       Serial.println("  PKP/PKI/PKD   Position PID gains");
       Serial.println("  SKP/SKI/SKD   Speed PID gains");
-      Serial.println("  CLAMP<val>    Speed loop clamp");
       Serial.println("  SINT<ms>      Status print interval");
       Serial.println("  LOG           Toggle live data");
       Serial.println("  STOP / S      Stop motor");
