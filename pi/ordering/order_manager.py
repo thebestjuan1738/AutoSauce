@@ -167,8 +167,8 @@ class OrderManager:
         # Extruder always runs at medium speed; gantry sweep speed varies by level
         extruder_speed = "medium"
         level_to_sweep_ips = {
-            "light":  4.0,
-            "medium": 2.5,
+            "light":  5.0,
+            "medium": 3.0,
             "heavy":  1.0,
         }
         sweep_speed_ips = level_to_sweep_ips.get(level, 2.5)
