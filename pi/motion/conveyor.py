@@ -98,11 +98,32 @@ class GPIOConveyor:
                     return
         log.info("ConveyorController: no boot banner received (already running?), continuing")
 
+    def _reconnect(self) -> None:
+        """Reopen the serial port after an EIO / USB re-enumeration."""
+        log.warning("ConveyorController: serial error — reconnecting...")
+        try:
+            self._ser.close()
+        except Exception:
+            pass
+        # Give the Uno time to re-enumerate and boot
+        time.sleep(2.0)
+        port = _find_conveyor_port()
+        self._ser = serial.Serial(port, CONVEYOR_BAUD, timeout=1)
+        self._wait_for_ready()
+        log.info("ConveyorController: reconnected on %s", port)
+
     def _send(self, cmd: str) -> None:
-        """Send a command to the Arduino."""
-        self._ser.write(f"{cmd}\n".encode('utf-8'))
-        self._ser.flush()
-        log.debug("ConveyorController → %s", cmd)
+        """Send a command to the Arduino, reconnecting on EIO."""
+        try:
+            self._ser.write(f"{cmd}\n".encode('utf-8'))
+            self._ser.flush()
+            log.debug("ConveyorController → %s", cmd)
+        except (serial.SerialException, OSError) as e:
+            log.error("ConveyorController: send error (%s) — reconnecting", e)
+            self._reconnect()
+            self._ser.write(f"{cmd}\n".encode('utf-8'))
+            self._ser.flush()
+            log.debug("ConveyorController → %s (after reconnect)", cmd)
 
     def _wait_for_done(self, done_marker: str, timeout: float = MOVE_TIMEOUT_S) -> bool:
         """
@@ -117,18 +138,22 @@ class GPIOConveyor:
         """
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
-            if self._ser.in_waiting:
-                line = self._ser.readline().decode('utf-8', errors='ignore').strip()
-                if not line:
-                    continue
-                log.info(f"Conveyor: {line}")
-                if line == done_marker:
-                    return True
-                # Check for partial match (e.g., "MOVE_DONE:" prefix)
-                if done_marker.startswith("MOVE_DONE:") and line.startswith("MOVE_DONE:"):
-                    return True
-                if done_marker.startswith("CYL_DONE:") and line.startswith("CYL_DONE:"):
-                    return True
+            try:
+                if self._ser.in_waiting:
+                    line = self._ser.readline().decode('utf-8', errors='ignore').strip()
+                    if not line:
+                        continue
+                    log.info(f"Conveyor: {line}")
+                    if line == done_marker:
+                        return True
+                    # Check for partial match (e.g., "MOVE_DONE:" prefix)
+                    if done_marker.startswith("MOVE_DONE:") and line.startswith("MOVE_DONE:"):
+                        return True
+                    if done_marker.startswith("CYL_DONE:") and line.startswith("CYL_DONE:"):
+                        return True
+            except (serial.SerialException, OSError) as e:
+                log.error("ConveyorController: read error (%s) — reconnecting", e)
+                self._reconnect()
             time.sleep(0.01)
         log.error(f"ConveyorController: timeout waiting for {done_marker}")
         return False
