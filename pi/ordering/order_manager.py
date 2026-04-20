@@ -246,7 +246,7 @@ class OrderManager:
 
         # Start extruder dispensing (always slow)
         self._extruder.dispense(speed=extruder_speed)
-        time.sleep(0.2)
+        time.sleep(1.5)
 
         # Gantry sweeps to sauce end at level-dependent speed (this blocks until complete)
         log.info(f"Step 13: Gantry sweeping to sauce end at {sweep_speed_ips} in/s...")
