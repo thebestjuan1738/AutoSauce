@@ -121,12 +121,9 @@ class GPIOConveyor:
         except (serial.SerialException, OSError) as e:
             log.error("ConveyorController: send error (%s) — reconnecting", e)
             self._reconnect()
-            try:
-                self._ser.write(f"{cmd}\n".encode('utf-8'))
-                self._ser.flush()
-                log.debug("ConveyorController → %s (after reconnect)", cmd)
-            except (serial.SerialException, OSError) as e2:
-                raise RuntimeError(f"ConveyorController: send failed after reconnect: {e2}") from e2
+            self._ser.write(f"{cmd}\n".encode('utf-8'))
+            self._ser.flush()
+            log.debug("ConveyorController → %s (after reconnect)", cmd)
 
     def _wait_for_done(self, done_marker: str, timeout: float = MOVE_TIMEOUT_S) -> bool:
         """
@@ -249,22 +246,11 @@ class GPIOConveyor:
     def stop_zigzag(self) -> None:
         """
         Stop zigzag mode and return to center position.
-        If the Arduino rebooted due to motor back-EMF (EIO), zigzag is already stopped
-        because the motor has no power — treat the disconnect as success and continue.
-        _send_and_wait will have already called _reconnect() internally, so the serial
-        port is ready for the next command.
+        If the Arduino rebooted mid-zigzag (EIO), zigzag is already stopped — log and continue.
         """
         log.info("ConveyorController: stopping zigzag...")
-        try:
-            if not self._send_and_wait("ZIGZAGSTOP", "MOVE_DONE:ZIGZAG", timeout=10.0):
-                log.warning("ConveyorController: zigzag stop timed out — Arduino likely rebooted, zigzag is stopped")
-                return
-        except (serial.SerialException, OSError, RuntimeError) as e:
-            log.warning(
-                "ConveyorController: zigzag stop lost connection (%s) — "
-                "Arduino rebooted from motor back-EMF; zigzag is stopped, continuing",
-                e,
-            )
+        if not self._send_and_wait("ZIGZAGSTOP", "MOVE_DONE:ZIGZAG", timeout=10.0):
+            log.warning("ConveyorController: zigzag stop timed out — Arduino likely rebooted, zigzag is stopped")
             return
         log.info("ConveyorController: zigzag stopped, returned to center")
 

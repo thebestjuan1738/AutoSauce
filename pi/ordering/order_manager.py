@@ -167,11 +167,11 @@ class OrderManager:
         # Extruder always runs at medium speed; gantry sweep speed varies by level
         extruder_speed = "medium"
         level_to_sweep_ips = {
-            "light":  3.0,
-            "medium": 2.0,
-            "heavy":   1.0,
+            "light":  4.0,
+            "medium": 2.5,
+            "heavy":  1.0,
         }
-        sweep_speed_ips = level_to_sweep_ips.get(level, 5.0)
+        sweep_speed_ips = level_to_sweep_ips.get(level, 2.5)
 
         # ═══════════════════════════════════════════════════════════════════════
         # STEPS 3-5: HOTDOG LOADING (Conveyor Controller)
