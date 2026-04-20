@@ -161,7 +161,11 @@ class GPIOConveyor:
     def _send_and_wait(self, cmd: str, done_marker: str, timeout: float = MOVE_TIMEOUT_S) -> bool:
         """Send a command and wait for completion."""
         with self._lock:
-            self._ser.reset_input_buffer()
+            try:
+                self._ser.reset_input_buffer()
+            except (serial.SerialException, OSError) as e:
+                log.error("ConveyorController: reset_input_buffer error (%s) — reconnecting", e)
+                self._reconnect()
             self._send(cmd)
             return self._wait_for_done(done_marker, timeout)
 
@@ -242,10 +246,12 @@ class GPIOConveyor:
     def stop_zigzag(self) -> None:
         """
         Stop zigzag mode and return to center position.
+        If the Arduino rebooted mid-zigzag (EIO), zigzag is already stopped — log and continue.
         """
         log.info("ConveyorController: stopping zigzag...")
         if not self._send_and_wait("ZIGZAGSTOP", "MOVE_DONE:ZIGZAG", timeout=10.0):
-            raise RuntimeError("ConveyorController: zigzag stop failed")
+            log.warning("ConveyorController: zigzag stop timed out — Arduino likely rebooted, zigzag is stopped")
+            return
         log.info("ConveyorController: zigzag stopped, returned to center")
 
     def stop(self) -> None:
