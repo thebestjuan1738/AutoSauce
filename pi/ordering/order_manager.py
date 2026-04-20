@@ -213,20 +213,21 @@ class OrderManager:
 
         # Steps 9-11 are skipped if the extruder is already at plunger contact
         # (i.e. the previous order left it extended — no retract between orders).
-        if self._extruder.is_plunger_met:
-            log.info("Steps 9-11: Skipping — plunger already at contact position")
-        else:
+        if not self._extruder.is_plunger_met:
             # Step 9: Gantry moves to dock
             log.info("Step 9: Gantry → dock")
             self._gantry.move_to(POSITIONS["dock"])
 
-            # Step 10: Gripper closes (grab sauce bottle)
-            log.info("Step 10: Gripper → CLOSE (grab bottle)")
-            self._gripper.close()
+        # Step 10: Gripper always closes (may have been released at end of previous order)
+        log.info("Step 10: Gripper → CLOSE (grab bottle)")
+        self._gripper.close()
 
+        if not self._extruder.is_plunger_met:
             # Step 11: Extruder meets plunger (before gantry moves to dispense position)
             log.info("Step 11: Extruder → MEETPLUNGER")
             self._extruder.meet_plunger()
+        else:
+            log.info("Steps 9+11: Skipping dock and meet plunger — plunger already at contact")
 
         # Step 12: Gantry moves to sauce start (dispense position)
         log.info("Step 12: Gantry → sauce start (dispense position)")

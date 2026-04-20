@@ -21,7 +21,7 @@ Scaling to multiple sauces later:
 POSITIONS = {
     "dock":     355,    # where the sauce dispenser sits when not in use
     "home":     0,      # resting position between orders (home end of rail)
-    "dispense": 20,    # over the conveyor belt / sandwich
+    "dispense": 33,    # over the conveyor belt / sandwich
 }
 
 # Gantry dispense sweep end position.
