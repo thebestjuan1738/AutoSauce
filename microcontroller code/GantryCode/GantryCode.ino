@@ -45,7 +45,7 @@ unsigned long lastPosLoop = 0;
 unsigned long lastSpdLoop = 0;
 
 // ---- Speed limits ----
-float maxMoveSpeed           = 3.0;
+float maxMoveSpeed           = 999;
 float desiredSpeedSetpoint   = 0.0;
 #define MIN_PULSE_OFFSET     30
 #define POS_DEADBAND         50
@@ -565,7 +565,7 @@ void loop() {
 
     } else if (cmd.startsWith("MSPD")) {
       float spd = cmd.substring(4).toFloat();
-      spd = constrain(spd, 0.1, MAX_SPEED_HARD_CAP);
+      spd = max(spd, 0.1f);
       maxMoveSpeed = spd;
       Serial.print("[SPEED] Max move speed = ");
       Serial.print(maxMoveSpeed, 2); Serial.println(" in/s");
@@ -676,7 +676,6 @@ void loop() {
       Serial.print("  Actual speed   : "); Serial.print(currentSpeedInchesPerSec, 3); Serial.println(" in/s");
       Serial.print("  Speed setpoint : "); Serial.print(desiredSpeedSetpoint, 3); Serial.println(" in/s");
       Serial.print("  Max move speed : "); Serial.print(maxMoveSpeed, 2); Serial.println(" in/s");
-      Serial.print("  Hard speed cap : "); Serial.print(MAX_SPEED_HARD_CAP, 1); Serial.println(" in/s");
       Serial.print("  Soft limit     : "); Serial.print(maxTravelInches, 3); Serial.println(" in");
       Serial.print("  Dock position  : "); Serial.print(DOCK_POSITION_INCHES, 1); Serial.println(" in");
       Serial.print("  Sauce start    : "); Serial.print(SAUCE_START_INCHES, 2); Serial.println(" in");
