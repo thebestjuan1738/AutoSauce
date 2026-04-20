@@ -47,7 +47,7 @@ unsigned long lastSpdLoop = 0;
 // ---- Speed limits ----
 float maxMoveSpeed           = 3.0;
 float desiredSpeedSetpoint   = 0.0;
-#define MAX_SPEED_HARD_CAP   6.0
+#define MAX_SPEED_HARD_CAP   10.0
 #define MIN_PULSE_OFFSET     30
 #define POS_DEADBAND         50
 #define SPD_CLAMP_DEFAULT    80

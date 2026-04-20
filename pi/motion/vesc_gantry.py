@@ -53,7 +53,7 @@ SPEED_KP_DEFAULT         = 2.0
 MAX_SPEED_ESTIMATE       = 8.0
 MIN_PULSE_OFFSET         = 30
 RAMP_DISTANCE_INCHES     = 2.0
-MAX_SPEED_HARD_CAP       = 6.0   # hard cap — firmware never exceeds this in/s
+MAX_SPEED_HARD_CAP       = 10.0  # hard cap — firmware never exceeds this in/s
 
 # Homing
 HOME_REV_START      = 20
@@ -528,13 +528,12 @@ class VESCGantry:
 
     # ── High-level OrderManager interface ─────────────────────────────────────
 
-    def move_to(self, position_mm: int, max_duty: float = 1.0) -> None:
+    def move_to(self, position_mm: int, max_duty: float = 1.0, speed_ips: float = None) -> None:
         """
         Blocking closed-loop move to position_mm from the dock end of the rail.
-        Sets speed (SPEED), then sends GOTO. Waits for "[GOTO] Arrived at".
+        Sets speed (MSPD), then sends GOTO. Waits for "[GOTO] Arrived at".
 
-        Pass max_duty=SWEEP_MAX_DUTY for the slow sauce dispense sweep —
-        selects SWEEP_SPEED_IPS instead of TRAVEL_SPEED_IPS.
+        Pass speed_ips to override the default travel speed (e.g. for dispense sweep).
 
         Raises TimeoutError if the move doesn't complete within TRAVEL_TIMEOUT_S.
         Raises RuntimeError on firmware-reported errors or limit conditions.
@@ -542,7 +541,8 @@ class VESCGantry:
         if position_mm == self._position_mm:
             return
 
-        speed_ips   = SWEEP_SPEED_IPS if max_duty <= SWEEP_MAX_DUTY else TRAVEL_SPEED_IPS
+        if speed_ips is None:
+            speed_ips = SWEEP_SPEED_IPS if max_duty <= SWEEP_MAX_DUTY else TRAVEL_SPEED_IPS
         position_in = position_mm / 25.4
 
         log.info(

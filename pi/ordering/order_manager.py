@@ -160,13 +160,14 @@ class OrderManager:
         Args:
             level: "light" | "medium" | "heavy" - determines extrude speed
         """
-        # Map coverage level to extruder speed
-        level_to_speed = {
-            "light": "fast",
-            "medium": "medium",
-            "heavy": "slow",
+        # Extruder always runs at slowest speed; gantry sweep speed varies by level
+        extruder_speed = "slow"
+        level_to_sweep_ips = {
+            "light":  10.0,
+            "medium":  5.0,
+            "heavy":   1.0,
         }
-        extruder_speed = level_to_speed.get(level, "medium")
+        sweep_speed_ips = level_to_sweep_ips.get(level, 5.0)
 
         # ═══════════════════════════════════════════════════════════════════════
         # STEPS 3-5: HOTDOG LOADING (Conveyor Controller)
@@ -243,12 +244,12 @@ class OrderManager:
         # Start conveyor zigzag
         self._conveyor.start_zigzag()
 
-        # Start extruder dispensing at the user's selected speed
+        # Start extruder dispensing (always slow)
         self._extruder.dispense(speed=extruder_speed)
 
-        # Gantry sweeps to sauce end (this blocks until complete)
-        log.info("Step 13: Gantry sweeping to sauce end...")
-        self._gantry.move_to(DISPENSE_SWEEP_END_MM, max_duty=SWEEP_MAX_DUTY)
+        # Gantry sweeps to sauce end at level-dependent speed (this blocks until complete)
+        log.info(f"Step 13: Gantry sweeping to sauce end at {sweep_speed_ips} in/s...")
+        self._gantry.move_to(DISPENSE_SWEEP_END_MM, speed_ips=sweep_speed_ips)
 
         # Step 14: When gantry reaches end, stop zigzag and extruding
         log.info("Step 14: Gantry reached end — stopping zigzag and extruding")
