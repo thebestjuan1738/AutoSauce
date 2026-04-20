@@ -1,6 +1,6 @@
 # AutoSauce
 
-Raspberry Pi-based automated sauce dispensing system. A touchscreen kiosk that lets users select sauce coverage level (light/medium/heavy), then automates a multi-actuator sequence to dispense sauce onto items on a conveyor belt.
+Raspberry Pi-based automated sauce dispensing system. A touchscreen kiosk that lets users select sauce coverage level (light/medium/heavy), then automates a multi-actuator sequence to dispense sauce onto hotdogs on a conveyor belt.
 
 ## Important Guidelines
 
@@ -8,42 +8,107 @@ Raspberry Pi-based automated sauce dispensing system. A touchscreen kiosk that l
 - **`pi/ordering/order_manager.py`** - Main orchestration program that controls all sequencing. Make changes here for workflow modifications.
 - **`pi/motion/` scripts** - Control subclasses that send serial commands to slave Arduinos and ESP32s. Modify these for hardware control changes.
 
-## Tech Stack
+## Hardware Architecture
 
-- **Backend**: Python 3.10+, FastAPI, Uvicorn
-- **Frontend**: Vanilla HTML/CSS/JS served via FastAPI static files
-- **Hardware Control**:
-  - Arduino/NodeMCU over USB serial for motion control
-  - RPi.GPIO/gpiozero for PWM motor control
-  - PyVESC for VESC gantry controller
-- **Deployment**: Docker + systemd services on Raspberry Pi
+The system uses 3 microcontrollers communicating over USB serial:
+
+| Controller | Hardware | Port | Baud | Purpose |
+|------------|----------|------|------|---------|
+| **GantryCode** | NodeMCU ESP8266 | /dev/ttyUSB0 | 115200 | Linear gantry positioning |
+| **PrintheadCode** | Arduino Mega | /dev/ttyACM0 | 115200 | Gripper + Extruder |
+| **ConveyorHotdogCode** | Arduino Uno | /dev/ttyACM1 | 9600 | Conveyor + Cylinder + Lamp |
+
+## Microcontroller Commands
+
+### GantryCode (ESP8266) - `vesc_gantry.py`
+
+| Command | Response | Description |
+|---------|----------|-------------|
+| `GOTO<inches>` | `GOTO COMPLETE` | Move to position |
+| `DOCK` | `DOCK COMPLETE` | Move to dock (14.0 in) |
+| `SAUCE<speed>` | `SAUCE COMPLETE` | Run sauce dispensing sequence |
+| `ZERO` | `HOMING COMPLETE` | Run homing routine |
+| `POS` | `[POS] X.XXX in` | Query current position |
+| `STOP` | `STOPPED` | Emergency stop |
+
+### PrintheadCode (Mega) - `gripper.py` + `extruder.py`
+
+| Command | Response | Description |
+|---------|----------|-------------|
+| `HOMEGRAB` | `HOMEGRAB_DONE` | Home gripper |
+| `GRAB` | `GRAB_DONE` | Close gripper (grab bottle) |
+| `RELEASE` | `RELEASE_DONE` | Open gripper (release bottle) |
+| `HOMEEXT` | `HOMEEXT_DONE` | Home extruder |
+| `MEETPLUNGER` | `PLUNGER_DONE` | Drive to plunger contact |
+| `EXTRUDESLOW/MED/FAST` | `EXTRUDING` | Start dispensing |
+| `STOPEXT` | `STOPEXT_DONE` | Stop extruder |
+| `OPENEXT` | `OPENEXT_DONE` | Retract extruder |
+
+### ConveyorHotdogCode (Uno) - `conveyor.py`
+
+| Command | Response | Description |
+|---------|----------|-------------|
+| `HOME` | `HOME_DONE` | Zero position |
+| `HOTDOG` | `MOVE_DONE:HOTDOG` | Move to hotdog station (268mm) |
+| `HEAT` | `MOVE_DONE:HEAT` | Move to heat station (438mm) |
+| `SAUCE` | `MOVE_DONE:SAUCE` | Move to sauce station (739mm) |
+| `PICKUP` | `MOVE_DONE:PICKUP` | Move to pickup station (1020mm) |
+| `ZIGZAG` | - | Start zigzag oscillation |
+| `ZIGZAGSTOP` | `MOVE_DONE:ZIGZAG` | Stop zigzag |
+| `GRAB` | `CYL_DONE:GRAB` | Cylinder to grab position |
+| `DROP` | `CYL_DONE:DROP` | Cylinder to drop position |
+| `LAMPON` | `LAMP_DONE:ON` | Turn on heat lamp |
+| `LAMPOFF` | `LAMP_DONE:OFF` | Turn off heat lamp |
+
+## Full Motion Sequence
+
+Orders follow this 16-step sequence in `order_manager.py`:
+
+**Phase 1: Hotdog Loading & Heating**
+1. Conveyor → HOME
+2. Conveyor → HOTDOG station
+3. Cylinder → GRAB (pick up hotdog)
+4. Conveyor → HEAT station
+5. Lamp ON → wait 3s → Lamp OFF
+6. Cylinder → DROP (place hotdog)
+7. Conveyor → SAUCE station
+
+**Phase 2: Sauce Dispensing**
+8. Gantry → dock position
+9. Gripper → GRAB (grab sauce bottle)
+10. Gantry → dispense position
+11. Extruder → MEETPLUNGER
+12. Concurrent: Extruder dispenses + Gantry sweeps + Conveyor zigzags
+
+**Phase 3: Cleanup**
+13. Extruder retract + Gantry → dock (simultaneous)
+14. Gripper → RELEASE
+15. Gantry → home
+16. Conveyor → PICKUP station
 
 ## Directory Structure
 
 ```
 AutoSauce/
 ├── main.py                    # Entry point - starts FastAPI server & OrderManager
-├── calibrate_gantry.py        # Interactive gantry calibration utility
-├── autosauce_testing.ino      # Arduino firmware for gantry control
+├── microcontroller code/      # Arduino firmware for all 3 controllers
+│   ├── GantryCode/           # ESP8266 gantry controller
+│   ├── PrintheadCode/        # Mega gripper + extruder
+│   └── ConveyorHotdogCode/   # Uno conveyor + cylinder + lamp
 ├── pi/                        # Backend Python package
-│   ├── api/
-│   │   └── server.py          # FastAPI endpoint definitions
+│   ├── api/server.py          # FastAPI endpoints
 │   ├── ordering/
-│   │   ├── order_manager.py   # Queue + motion sequence orchestration
-│   │   └── sauce_config.py    # All tunable physical parameters
+│   │   ├── order_manager.py   # Main orchestration (16-step sequence)
+│   │   └── sauce_config.py    # Tunable parameters
 │   ├── motion/
-│   │   ├── vesc_gantry.py     # Gantry driver (VESC + Arduino)
-│   │   ├── gripper.py         # Gripper driver (PWM + Arduino)
-│   │   ├── extruder.py        # Extruder driver (PWM + Arduino)
-│   │   ├── conveyor.py        # Conveyor driver (PWM)
-│   │   ├── arduino_controller.py  # Serial communication singleton
-│   │   └── mock_drivers.py    # Fake drivers for testing/dev
-│   └── utils/
-│       └── logger.py          # Centralized logging with in-memory buffer
-└── ui/                        # Frontend static files
-    ├── index.html             # Main kiosk interface
-    ├── script.js              # UI logic & API calls
-    └── style.css              # Styling & animations
+│   │   ├── vesc_gantry.py     # Gantry driver (ESP8266)
+│   │   ├── gripper.py         # Gripper driver (Mega)
+│   │   ├── extruder.py        # Extruder driver (Mega)
+│   │   ├── conveyor.py        # Conveyor driver (Uno)
+│   │   ├── arduino_controller.py  # Serial singleton for Mega
+│   │   └── mock_drivers.py    # Fake drivers for testing
+│   └── utils/logger.py
+└── ui/                        # Frontend (HTML/CSS/JS)
 ```
 
 ## Running the Project
@@ -56,7 +121,7 @@ python main.py
 # http://localhost:8080/ui
 ```
 
-Toggle `USE_MOCK = True/False` in `main.py` to switch between mock and real hardware drivers.
+Toggle `USE_MOCK = True/False` in `main.py` to switch between mock and real hardware.
 
 ## Key Configuration
 
@@ -64,7 +129,7 @@ All tunable parameters are in `pi/ordering/sauce_config.py`:
 
 ```python
 POSITIONS = {
-    "dock": 355,      # Sauce dispenser rest position
+    "dock": 355,      # Sauce dispenser rest position (mm)
     "home": 0,        # Resting position between orders
     "dispense": 20,   # Over conveyor belt
 }
@@ -74,66 +139,6 @@ COVERAGE_PROFILES = {
     "medium": {"conveyor_speed": 50, "conveyor_ms": 4500},
     "heavy":  {"conveyor_speed": 25, "conveyor_ms": 6000},
 }
-```
-
-## API Endpoints
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| POST | `/api/dispense` | Submit order `{"level": "medium"}` |
-| GET | `/api/status/{order_id}` | Poll order progress |
-| GET | `/api/levels` | List valid coverage levels |
-| GET | `/api/logs` | Get recent log entries |
-| GET | `/api/health` | Health check |
-| POST | `/api/manual/home-gripper` | Home gripper |
-| POST | `/api/manual/home-extruder` | Home extruder |
-| POST | `/api/manual/move-gantry/{location}` | Move gantry to named position |
-
-## Motion Sequence
-
-Orders follow this 10-step sequence in `order_manager.py`:
-
-1. Gantry → dock
-2. Gripper close (grab bottle)
-3. Gantry → dispense position
-4. Extruder → meet plunger
-5-6. Concurrent: Conveyor runs + Extruder dispenses + Gantry sweeps
-7-8. Concurrent: Extruder retracts + Gantry returns to dock
-9. Gripper open (release bottle)
-10. Gantry → home
-
-## Key Patterns
-
-- **Dependency Injection**: `OrderManager` receives driver objects, enabling mock testing
-- **Thread-safe Queue**: Orders processed one at a time by background worker
-- **Arduino Singleton**: `ArduinoController` manages serial port with thread locking
-- **Mock Drivers**: All hardware has mock implementations for dev without hardware
-
-## GPIO Pins (BCM)
-
-```python
-PIN_GRIPPER  = 23
-PIN_EXTRUDER = 18
-PIN_CONVEYOR = 24
-```
-
-## Driver Interfaces
-
-All drivers follow consistent interfaces:
-
-```python
-# Gantry
-move_to(position_mm: int) → None
-home() → None
-get_position_mm() → float
-
-# Gripper/Extruder
-home() → None
-close()/open() or dispense()/retract()
-
-# Conveyor
-start(speed: int) → None  # 0-100
-stop() → None
 ```
 
 ## Raspberry Pi Deployment
@@ -156,11 +161,35 @@ sudo systemctl restart sauce-backend
 docker logs sauce-backend
 ```
 
-### Docker Build (if needed)
+## Driver Interfaces
 
-```bash
-sudo docker build -t saucebot-backend .
-sudo docker run -d --name saucebot --device /dev/ttyACM0 -p 8080:8080 saucebot-backend
+```python
+# Gantry (vesc_gantry.py)
+move_to(position_mm: int, max_duty: float = 1.0) → None
+home() → None
+get_position_mm() → float
+
+# Gripper (gripper.py)
+home() → None
+close() → None   # GRAB
+open() → None    # RELEASE
+
+# Extruder (extruder.py)
+home() → None
+meet_plunger() → None
+dispense(speed: str = "medium") → None  # "slow", "medium", "fast"
+stop_dispense() → None
+retract() → None
+
+# Conveyor (conveyor.py)
+home() → None
+move_to_station(station: str) → None  # "hotdog", "heat", "sauce", "pickup"
+start_zigzag() → None
+stop_zigzag() → None
+cylinder_grab() → None
+cylinder_drop() → None
+lamp_on() → None
+lamp_off() → None
 ```
 
 ## Common Issues
@@ -171,3 +200,4 @@ sudo docker run -d --name saucebot --device /dev/ttyACM0 -p 8080:8080 saucebot-b
 | `Address already in use` | `pkill -f main.py` |
 | `No module named 'pi'` | Run from `AutoSauce/` root directory |
 | Blank page in browser | Ensure `python main.py` is running |
+| Arduino timeout | Check USB connections, verify correct port |

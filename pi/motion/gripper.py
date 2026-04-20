@@ -1,21 +1,23 @@
 """
 gripper.py — Gripper driver for the SauceBot.
 
-Delegates motion control to the Arduino via USB serial.
+Communicates with PrintheadCode.ino on the Arduino Mega via USB serial.
+The gripper grabs and releases the sauce bottle.
+
+Commands sent to Arduino:
+    HOMEGRAB    -> HOMEGRAB_DONE   (home gripper to open position)
+    GRAB        -> GRAB_DONE       (close gripper to grab bottle)
+    RELEASE     -> RELEASE_DONE    (open gripper to release bottle)
 """
 
 from pi.utils.logger import log
 from pi.motion.arduino_controller import ArduinoController
 
-# ─── Motion constants ──────────────────────────────────────────────────────────
-_TICKS_PER_REV         = 753
-_CLOSE_REVOLUTIONS     = 1.2
-_CLOSE_TARGET_TICKS    = -int(_CLOSE_REVOLUTIONS * _TICKS_PER_REV)   # -1506
-
 
 class GPIOGripper:
     """
-    Controls the 5000 Series 12VDC gripper motor via the ArduinoController.
+    Controls the goBILDA 5000 Series gripper motor via ArduinoController.
+    Communicates with PrintheadCode.ino firmware.
     """
 
     def __init__(self):
@@ -24,30 +26,37 @@ class GPIOGripper:
         self.home()
 
     def cleanup(self) -> None:
-        """Cleanup logic (now handled on Arduino)."""
+        """Cleanup logic (handled on Arduino)."""
         log.info("GPIOGripper: cleanup done")
 
     # ─── Motion ───────────────────────────────────────────────────────────────
 
     def home(self) -> None:
         """
-        Sends HOME_GRIPPER command to Arduino.
+        Home the gripper to its open position.
+        Sends HOMEGRAB, waits for HOMEGRAB_DONE.
         """
         log.info("GPIOGripper: homing...")
-        if not self.arduino.send_command("HOME_GRIPPER", timeout=20.0):
+        if not self.arduino.send_command("HOMEGRAB", timeout=20.0, done_marker="HOMEGRAB_DONE"):
             raise RuntimeError("GPIOGripper: homing timed out or failed")
         log.info("GPIOGripper: homing complete")
 
-    def open(self) -> None:
-        """Sends MOVE_GRIPPER:0 command to open the gripper."""
-        log.info("GPIOGripper: opening...")
-        if not self.arduino.send_command("MOVE_GRIPPER:0", timeout=10.0):
-            raise RuntimeError("GPIOGripper: open timed out or failed")
-        log.info("GPIOGripper: open done")
-
     def close(self) -> None:
-        """Sends MOVE_GRIPPER command to close."""
-        log.info("GPIOGripper: closing to target ticks...")
-        if not self.arduino.send_command(f"MOVE_GRIPPER:{_CLOSE_TARGET_TICKS}", timeout=15.0):
-            raise RuntimeError("GPIOGripper: close timed out or failed")
-        log.info("GPIOGripper: close done")
+        """
+        Close the gripper to grab the sauce bottle.
+        Sends GRAB, waits for GRAB_DONE.
+        """
+        log.info("GPIOGripper: closing (grabbing bottle)...")
+        if not self.arduino.send_command("GRAB", timeout=15.0, done_marker="GRAB_DONE"):
+            raise RuntimeError("GPIOGripper: close/grab timed out or failed")
+        log.info("GPIOGripper: grab complete")
+
+    def open(self) -> None:
+        """
+        Open the gripper to release the sauce bottle.
+        Sends RELEASE, waits for RELEASE_DONE.
+        """
+        log.info("GPIOGripper: opening (releasing bottle)...")
+        if not self.arduino.send_command("RELEASE", timeout=15.0, done_marker="RELEASE_DONE"):
+            raise RuntimeError("GPIOGripper: open/release timed out or failed")
+        log.info("GPIOGripper: release complete")

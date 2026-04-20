@@ -125,7 +125,19 @@ class ArduinoController:
                     return
         raise RuntimeError("ArduinoController: no PONG received — Arduino may be unresponsive")
 
-    def send_command(self, cmd: str, timeout: float = 15.0) -> bool:
+    def send_command(self, cmd: str, timeout: float = 15.0, done_marker: str = None) -> bool:
+        """
+        Send a command to the Arduino and wait for completion.
+
+        Args:
+            cmd: Command string to send
+            timeout: Max seconds to wait for completion
+            done_marker: Expected completion string (e.g., "GRAB_DONE", "PLUNGER_DONE").
+                         If None, looks for any line ending with "_DONE" or "READY".
+
+        Returns:
+            True if command completed successfully, False otherwise.
+        """
         if not self.port or not self.port.is_open:
             log.error("Cannot send command, Arduino not connected.")
             return False
@@ -136,17 +148,82 @@ class ArduinoController:
             self.port.write(full_cmd.encode('utf-8'))
             self.port.flush()
             log.info(f"Sent to Arduino: {cmd}")
-            
+
             start_time = time.time()
             while time.time() - start_time < timeout:
                 if self.port.in_waiting > 0:
                     response = self.port.readline().decode('utf-8').strip()
-                    if response == "DONE":
-                        log.info(f"Arduino completed: {cmd}")
+                    if not response:
+                        continue
+
+                    # Check for specific done marker
+                    if done_marker and response == done_marker:
+                        log.info(f"Arduino completed: {cmd} -> {response}")
                         return True
-                    elif response:
-                        log.info(f"Arduino log: {response}")
+
+                    # Check for generic completion patterns
+                    if done_marker is None:
+                        if response.endswith("_DONE") or response == "READY" or response == "STOPPED":
+                            log.info(f"Arduino completed: {cmd} -> {response}")
+                            return True
+
+                    # Check for error responses
+                    if response == "ERROR" or response.startswith("[ERR]"):
+                        log.error(f"Arduino error for {cmd}: {response}")
+                        return False
+
+                    # Log intermediate messages
+                    log.info(f"Arduino: {response}")
                 time.sleep(0.01)
-            
+
             log.error(f"Arduino command {cmd} timed out after {timeout}s")
+            return False
+
+    def send_command_async(self, cmd: str) -> bool:
+        """
+        Send a command without waiting for completion.
+        Useful for commands like EXTRUDESLOW that run continuously.
+
+        Returns:
+            True if command was sent, False if not connected.
+        """
+        if not self.port or not self.port.is_open:
+            log.error("Cannot send command, Arduino not connected.")
+            return False
+
+        with self.serial_lock:
+            full_cmd = f"{cmd}\n"
+            self.port.write(full_cmd.encode('utf-8'))
+            self.port.flush()
+            log.info(f"Sent to Arduino (async): {cmd}")
+            return True
+
+    def wait_for_response(self, marker: str, timeout: float = 15.0) -> bool:
+        """
+        Wait for a specific response marker from the Arduino.
+
+        Args:
+            marker: The response string to wait for
+            timeout: Max seconds to wait
+
+        Returns:
+            True if marker was received, False on timeout.
+        """
+        if not self.port or not self.port.is_open:
+            return False
+
+        with self.serial_lock:
+            start_time = time.time()
+            while time.time() - start_time < timeout:
+                if self.port.in_waiting > 0:
+                    response = self.port.readline().decode('utf-8').strip()
+                    if not response:
+                        continue
+                    log.info(f"Arduino: {response}")
+                    if response == marker:
+                        return True
+                    if response == "ERROR" or response.startswith("[ERR]"):
+                        log.error(f"Arduino error: {response}")
+                        return False
+                time.sleep(0.01)
             return False

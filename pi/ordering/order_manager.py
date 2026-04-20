@@ -4,21 +4,36 @@ order_manager.py
 Manages the order queue and executes the full motion sequence for each order.
 Runs the sequence in a background thread so the UI stays responsive.
 
+Orchestrates all 3 microcontrollers:
+    - GantryCode (ESP8266)      : Linear gantry positioning
+    - PrintheadCode (Mega)      : Gripper + Extruder control
+    - ConveyorHotdogCode (Uno)  : Conveyor belt + Cylinder + Heat lamp
+
 Order lifecycle:
     QUEUED → PROCESSING → DONE
                        → FAILED
 
-Motion sequence per order:
-    1.  Gantry → dock
-    2.  Gripper close (grab bottle)
-    3.  Gantry → dispense
-    4.  Extruder: MEET_PLUNGER — drive until pad contact confirmed (blocking)
-    5.  Conveyor + extruder DISPENSE_SAUCE + slow gantry sweep simultaneously
-    6.  Extruder finishes; conveyor finishes
-    7.  Extruder retract + Gantry → home (simultaneous)
-    8.  Gantry → dock
-    9.  Gripper open (return bottle)
-    10. Gantry → home
+Full motion sequence per order:
+    1.  User selects sauce level (light/medium/heavy) on touchscreen
+    2.  User clicks start on touchscreen
+    3.  Conveyor: Home (zero position)
+    4.  Conveyor: Move to HOTDOG station
+    5.  Cylinder: GRAB, wait 1 sec, DROP
+    6.  Conveyor: Move to HEAT station
+    7.  Lamp: ON for 10 seconds, then OFF
+    8.  Conveyor: Move to SAUCE station
+    9.  Gantry: Move to dock position
+    10. Gripper: Close (grab sauce bottle)
+    11. Extruder: MEETPLUNGER (drive until contact)
+    12. Gantry: Move to sauce start position
+    13. Concurrent: Zigzag + Gantry sweep to sauce end + Extrude at user speed
+    14. When gantry reaches end: stop zigzag and extruding
+    15. Wait 5 seconds
+    16. Conveyor: Move to PICKUP station
+    17. Extruder: Retract
+    18. Gantry: Return to dock
+    19. Gripper: Release (drop bottle)
+    20. Gantry: Move to 2 inches (51mm)
 
 The UI calls submit_order() and polls get_status() — that's the entire
 public interface. Nothing else in this file is meant to be called directly.
@@ -26,8 +41,9 @@ public interface. Nothing else in this file is meant to be called directly.
 
 import queue
 import threading
+import time
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import Enum, auto
 from typing import Optional
 
@@ -60,10 +76,11 @@ class OrderManager:
     def __init__(self, gantry, gripper, extruder, conveyor):
         """
         Args:
-            gantry   — has move_to(position_mm: int) -> None
-            gripper  — has home(), close(), and open()
-            extruder — has dispense(duration_ms: int) -> None
-            conveyor — has start(speed: int), stop() -> None
+            gantry   — VESCGantry: move_to(position_mm), home(), get_position_mm()
+            gripper  — GPIOGripper: home(), close(), open()
+            extruder — GPIOExtruder: home(), meet_plunger(), dispense(), stop_dispense(), retract()
+            conveyor — GPIOConveyor: home(), move_to_station(), start_zigzag(), stop_zigzag(),
+                                     cylinder_grab(), cylinder_drop(), lamp_on(), lamp_off()
         """
         self._gantry  = gantry
         self._gripper = gripper
@@ -129,8 +146,7 @@ class OrderManager:
         order.status = OrderStatus.PROCESSING
 
         try:
-            profile = get_profile(order.level)
-            self._run_sequence(profile)
+            self._run_sequence(order.level)
             order.status = OrderStatus.DONE
             log.info(f"Order {order.order_id} DONE")
 
@@ -140,87 +156,136 @@ class OrderManager:
             log.error(f"Order {order.order_id} FAILED: {e}")
             self._safe_abort()
 
-    def _run_sequence(self, profile: dict) -> None:
+    def _run_sequence(self, level: str) -> None:
         """
-        The motion sequence. Steps are numbered to match the class docstring.
-        Each step blocks until complete before moving to the next,
-        except steps 4/5 where conveyor and extruder run concurrently.
+        The full motion sequence orchestrating all 3 microcontrollers.
+        Steps are numbered to match the user's workflow specification.
+
+        Args:
+            level: "light" | "medium" | "heavy" - determines extrude speed
         """
-        # 1. Travel to dock
-        log.info("Step 1: gantry → dock")
+        # Map coverage level to extruder speed
+        level_to_speed = {
+            "light": "fast",
+            "medium": "medium",
+            "heavy": "slow",
+        }
+        extruder_speed = level_to_speed.get(level, "medium")
+
+        # ═══════════════════════════════════════════════════════════════════════
+        # STEPS 3-5: HOTDOG LOADING (Conveyor Controller)
+        # ═══════════════════════════════════════════════════════════════════════
+
+        # Step 3: Conveyor homes
+        log.info("Step 3: Conveyor → home")
+        self._conveyor.home()
+
+        # Step 4: Conveyor moves to hotdog station
+        log.info("Step 4: Conveyor → HOTDOG station")
+        self._conveyor.move_to_station("HOTDOG")
+
+        # Step 5: Cylinder grab, wait 1 sec, drop
+        log.info("Step 5: Cylinder GRAB")
+        self._conveyor.cylinder_grab()
+        log.info("Step 5: Waiting 1 second...")
+        time.sleep(1.0)
+        log.info("Step 5: Cylinder DROP")
+        self._conveyor.cylinder_drop()
+
+        # ═══════════════════════════════════════════════════════════════════════
+        # STEPS 6-8: HEATING & MOVE TO SAUCE (Conveyor Controller)
+        # ═══════════════════════════════════════════════════════════════════════
+
+        # Step 6: Conveyor moves to heat station
+        log.info("Step 6: Conveyor → HEAT station")
+        self._conveyor.move_to_station("HEAT")
+
+        # Step 7: Heat lamp on for 10 seconds
+        log.info("Step 7: Lamp ON (10 seconds)")
+        self._conveyor.lamp_on()
+        time.sleep(10.0)
+        self._conveyor.lamp_off()
+        log.info("Step 7: Lamp OFF")
+
+        # Step 8: Conveyor moves to sauce station
+        log.info("Step 8: Conveyor → SAUCE station")
+        self._conveyor.move_to_station("SAUCE")
+
+        # ═══════════════════════════════════════════════════════════════════════
+        # STEPS 9-12: PREPARE FOR DISPENSING (Gantry + Printhead)
+        # ═══════════════════════════════════════════════════════════════════════
+
+        # Step 9: Gantry moves to dock
+        log.info("Step 9: Gantry → dock")
         self._gantry.move_to(POSITIONS["dock"])
 
-        # 2. Close gripper — pick up sauce dispenser
-        log.info("Step 2: gripper close")
+        # Step 10: Gripper closes (grab sauce bottle)
+        log.info("Step 10: Gripper → CLOSE (grab bottle)")
         self._gripper.close()
 
-        # 3. Travel to dispense position
-        log.info("Step 3: gantry → dispense")
+        # Step 11: Extruder meets plunger (before gantry moves to dispense position)
+        log.info("Step 11: Extruder → MEETPLUNGER")
+        self._extruder.meet_plunger()
+
+        # Step 12: Gantry moves to sauce start (dispense position)
+        log.info("Step 12: Gantry → sauce start (dispense position)")
         self._gantry.move_to(POSITIONS["dispense"])
 
-        # 4. Wait for extruder to make contact with the pad before moving.
-        log.info("Step 4: extruder → meet plunger")
-        #self._extruder.meet_plunger()
+        # ═══════════════════════════════════════════════════════════════════════
+        # STEPS 13-14: CONCURRENT DISPENSING
+        # ═══════════════════════════════════════════════════════════════════════
 
-        # 5+6. Conveyor, extruder dispense, and slow gantry sweep simultaneously.
-        # Contact is already confirmed — extruder now pushes the fixed dispense amount
-        # while the gantry sweeps slowly for even coverage.
-        # Extruder blocks this thread; conveyor and sweep threads are joined after.
-        log.info("Step 5+6: conveyor + extruder dispense + slow gantry sweep")
-        stop_sweep = threading.Event()
-        conveyor_thread = threading.Thread(
-            target=self._run_conveyor,
-            args=(profile["conveyor_speed"], profile["conveyor_ms"]),
-            daemon=True,
-        )
-        sweep_thread = threading.Thread(
-            target=self._run_dispense_sweep,
-            args=(stop_sweep,),
-            daemon=True,
-        )
-        conveyor_thread.start()
-        sweep_thread.start()
-        #self._extruder.dispense()                        # blocks until done
-        stop_sweep.set()
-        sweep_thread.join()                              # finishes current move
-        conveyor_thread.join()                           # wait for belt to finish
-        log.info("Step 6+7: conveyor + sweep done")
+        # Step 13: Start concurrent operations
+        log.info(f"Step 13: Starting concurrent dispense (speed={extruder_speed})")
 
-        # 7+8. Retract extruder while gantry returns to dock — safe to overlap
-        # since the extruder retracts vertically while the gantry travels laterally.
-        log.info("Step 7+8: extruder retract + gantry → dock (simultaneous)")
-        retract_thread = threading.Thread(target=self._extruder.retract, daemon=True)
-        retract_thread.start()
+        # Start conveyor zigzag
+        self._conveyor.start_zigzag()
+
+        # Start extruder dispensing at the user's selected speed
+        self._extruder.dispense(speed=extruder_speed)
+
+        # Gantry sweeps to sauce end (this blocks until complete)
+        log.info("Step 13: Gantry sweeping to sauce end...")
+        self._gantry.move_to(DISPENSE_SWEEP_END_MM, max_duty=SWEEP_MAX_DUTY)
+
+        # Step 14: When gantry reaches end, stop zigzag and extruding
+        log.info("Step 14: Gantry reached end — stopping zigzag and extruding")
+        self._extruder.stop_dispense()
+        self._conveyor.stop_zigzag()
+
+        # ═══════════════════════════════════════════════════════════════════════
+        # STEPS 15-16: FINISH UP
+        # ═══════════════════════════════════════════════════════════════════════
+
+        # Step 15: Wait 5 seconds
+        log.info("Step 15: Waiting 5 seconds...")
+        time.sleep(5.0)
+
+        # Step 16: Conveyor moves to pickup station
+        log.info("Step 16: Conveyor → PICKUP station")
+        self._conveyor.move_to_station("PICKUP")
+
+        # ═══════════════════════════════════════════════════════════════════════
+        # STEPS 17-20: RETURN SAUCE BOTTLE
+        # ═══════════════════════════════════════════════════════════════════════
+
+        # Step 17: Retract the extruder
+        log.info("Step 17: Extruder → retract")
+        self._extruder.retract()
+
+        # Step 18: Return gantry to dock
+        log.info("Step 18: Gantry → dock")
         self._gantry.move_to(POSITIONS["dock"])
-        retract_thread.join()
 
-        # 9. Open gripper — release sauce dispenser at dock
-        log.info("Step 9: gripper open")
+        # Step 19: Release the gripper (drop bottle)
+        log.info("Step 19: Gripper → RELEASE (drop bottle)")
         self._gripper.open()
 
-        # 10. Return to home — resting position ready for next order
-        log.info("Step 10: gantry → home")
-        self._gantry.move_to(POSITIONS["home"])
+        # Step 20: Return gantry to 2 inches (50.8mm)
+        log.info("Step 20: Gantry → 2 inches (51mm)")
+        self._gantry.move_to(51)  # 2 inches = 50.8mm, rounded to 51
 
-    def _run_conveyor(self, speed: int, duration_ms: int) -> None:
-        """Runs on its own thread — forward for first half, reverse for second half."""
-        import time
-        half = duration_ms / 2 / 1000
-        self._conveyor.start(speed)
-        time.sleep(half)
-        if hasattr(self._conveyor, 'reverse'):
-            self._conveyor.reverse(speed)
-            time.sleep(half)
-        self._conveyor.stop()
-
-    def _run_dispense_sweep(self, stop: threading.Event) -> None:
-        """
-        Single slow sweep from the current dispense position to
-        DISPENSE_SWEEP_END_MM while the extruder dispenses.
-        Uses SWEEP_MAX_DUTY so the gantry moves slowly for even sauce coverage.
-        """
-        self._gantry.move_to(DISPENSE_SWEEP_END_MM, max_duty=SWEEP_MAX_DUTY)
-        log.info("Dispense sweep: complete at %dmm", DISPENSE_SWEEP_END_MM)
+        log.info("Sequence complete!")
 
     def _safe_abort(self) -> None:
         """Best-effort cleanup after a failure. Tries to stop all actuators."""
@@ -230,6 +295,10 @@ class OrderManager:
         except Exception:
             pass
         try:
-            self._gantry.move_to(POSITIONS["home"])
+            self._extruder.stop_dispense()
+        except Exception:
+            pass
+        try:
+            self._conveyor.stop_zigzag()
         except Exception:
             pass
