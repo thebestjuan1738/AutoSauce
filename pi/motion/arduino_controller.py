@@ -95,7 +95,7 @@ class ArduinoController:
         log.error("ArduinoController: could not connect to Arduino on any port")
 
     def _wait_for_ready(self, port_name: str) -> None:
-        """Wait for the READY banner, then verify with a PING/PONG."""
+        """Wait for the READY banner from the Arduino."""
         log.info(f"ArduinoController: waiting for READY banner on {port_name}...")
         deadline = time.time() + self._BOOT_TIMEOUT
         while time.time() < deadline:
@@ -103,27 +103,12 @@ class ArduinoController:
                 line = self.port.readline().decode('utf-8').strip()
                 log.info(f"ArduinoController boot: {line}")
                 if 'READY' in line:
-                    log.info("ArduinoController: READY received, sending PING...")
-                    self._ping()
+                    log.info("ArduinoController: READY received — Arduino is ready")
                     return
             time.sleep(0.05)
         raise RuntimeError(
             f"ArduinoController: timed out waiting for READY from {port_name}"
         )
-
-    def _ping(self) -> None:
-        """Send PING and expect PONG to confirm two-way communication."""
-        self.port.reset_input_buffer()
-        self.port.write(b'PING\n')
-        self.port.flush()
-        deadline = time.time() + 3.0
-        while time.time() < deadline:
-            if self.port.in_waiting > 0:
-                response = self.port.readline().decode('utf-8').strip()
-                if response == 'PONG':
-                    log.info("ArduinoController: PONG received — Arduino is ready")
-                    return
-        raise RuntimeError("ArduinoController: no PONG received — Arduino may be unresponsive")
 
     def send_command(self, cmd: str, timeout: float = 15.0, done_marker: str = None) -> bool:
         """
