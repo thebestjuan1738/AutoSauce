@@ -427,7 +427,7 @@ class VESCGantry:
             if not line:
                 continue
             log.debug("VESCGantry homing: %s", line)
-            if "[ZERO] Ready." in line:
+            if "HOMING COMPLETE" in line or "[ZERO] Ready." in line:
                 self._position_mm = 0
                 log.info("VESCGantry: homing complete, position = 0 mm")
                 return
