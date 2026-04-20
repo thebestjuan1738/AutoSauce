@@ -277,6 +277,9 @@ class VESCGantry:
                 line = self._readline()
                 if '[POS]' in line:
                     log.info("VESCGantry: boot check passed — %s", line)
+                    # Auto-home the gantry after successful boot check
+                    log.info("VESCGantry: auto-homing on startup...")
+                    self.home()
                     return
                 if '[ERR]' in line:
                     raise RuntimeError(f"VESCGantry boot check error: {line}")
