@@ -72,11 +72,12 @@ TRAVEL_TIMEOUT_S = 30
 BOOT_TIMEOUT_S = 20.0
 
 # Normal point-to-point move speed (inches per second).
-TRAVEL_SPEED_IPS = TARGET_SPEED_IPS_DEFAULT
+TRAVEL_SPEED_IPS = 4.0
+
 
 # Slow speed used during the sauce dispense sweep (inches per second).
 # Note: 0.5 in/s didn't have enough motor torque to maintain constant speed.
-SWEEP_SPEED_IPS = 1.0
+SWEEP_SPEED_IPS = 5.0
 
 # Sentinel value imported by order_manager.py — pass as max_duty=SWEEP_MAX_DUTY
 # to move_to() to select SWEEP_SPEED_IPS instead of TRAVEL_SPEED_IPS.
