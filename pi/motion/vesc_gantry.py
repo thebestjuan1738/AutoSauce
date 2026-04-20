@@ -53,7 +53,7 @@ SPEED_KP_DEFAULT         = 2.0
 MAX_SPEED_ESTIMATE       = 8.0
 MIN_PULSE_OFFSET         = 30
 RAMP_DISTANCE_INCHES     = 2.0
-MAX_SPEED_HARD_CAP       = 10.0  # hard cap — firmware never exceeds this in/s
+MAX_SPEED_HARD_CAP       = 999.0  # no firmware cap — set arbitrarily high
 
 # Homing
 HOME_REV_START      = 20

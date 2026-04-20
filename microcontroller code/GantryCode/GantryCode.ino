@@ -47,7 +47,6 @@ unsigned long lastSpdLoop = 0;
 // ---- Speed limits ----
 float maxMoveSpeed           = 3.0;
 float desiredSpeedSetpoint   = 0.0;
-#define MAX_SPEED_HARD_CAP   10.0
 #define MIN_PULSE_OFFSET     30
 #define POS_DEADBAND         50
 #define SPD_CLAMP_DEFAULT    80
@@ -202,7 +201,6 @@ void setup() {
   Serial.print("  Sauce end     : "); Serial.print(SAUCE_END_INCHES, 2); Serial.println(" in");
   Serial.print("  Sauce speed   : "); Serial.print(sauceSpeed, 2); Serial.println(" in/s");
   Serial.print("  Max move speed: "); Serial.print(maxMoveSpeed, 2); Serial.println(" in/s");
-  Serial.print("  Hard speed cap: "); Serial.print(MAX_SPEED_HARD_CAP, 1); Serial.println(" in/s");
   Serial.print("  Counts/inch   : "); Serial.println(COUNTS_PER_INCH);
   Serial.println("------------------------------");
 
@@ -222,21 +220,6 @@ void loop() {
   // ---- Update speed ----
   updateSpeed();
 
-  // ---- Hard speed cap — proportional braking, always active ----
-  if (currentSpeedInchesPerSec > MAX_SPEED_HARD_CAP) {
-    float overspeed = currentSpeedInchesPerSec - MAX_SPEED_HARD_CAP;
-    int brakePulse  = ESC_STOP - (int)(overspeed * 20.0);
-    brakePulse      = constrain(brakePulse, ESC_STOP - 200, ESC_STOP);
-    currentPulse    = brakePulse;
-    esc.writeMicroseconds(brakePulse);
-  }
-  if (currentSpeedInchesPerSec < -MAX_SPEED_HARD_CAP) {
-    float overspeed = abs(currentSpeedInchesPerSec) - MAX_SPEED_HARD_CAP;
-    int brakePulse  = ESC_STOP + (int)(overspeed * 20.0);
-    brakePulse      = constrain(brakePulse, ESC_STOP, ESC_STOP + 200);
-    currentPulse    = brakePulse;
-    esc.writeMicroseconds(brakePulse);
-  }
 
   // ---- Home limit switch ----
   if (!homingActive) {
@@ -531,10 +514,8 @@ void loop() {
 
     } else if (cmd.startsWith("SAUCE")) {
       float spd = cmd.substring(5).toFloat();
-      if (spd <= 0.0 || spd > MAX_SPEED_HARD_CAP) {
-        Serial.print("[ERR] Invalid sauce speed. Valid: 0.1 - ");
-        Serial.print(MAX_SPEED_HARD_CAP, 1);
-        Serial.println(" in/s");
+      if (spd <= 0.0) {
+        Serial.println("[ERR] Invalid sauce speed. Must be > 0.");
       } else if (movingToTarget) {
         Serial.println("[ERR] Gantry is already moving. Wait or STOP first.");
       } else {
@@ -647,10 +628,8 @@ void loop() {
         currentMoveContext   = MOVE_CONTEXT_NONE;
         resetPID();
         int power = constrain(cmd.substring(3).toInt(), 0, 100);
-        float pulseLimit    = (MAX_SPEED_HARD_CAP / 15.0) * (ESC_MAX - ESC_STOP);
-        int maxAllowedPulse = ESC_STOP + (int)pulseLimit;
         currentPulse = map(power, 0, 100, 1500, 2000);
-        currentPulse = constrain(currentPulse, ESC_MIN, maxAllowedPulse);
+        currentPulse = constrain(currentPulse, ESC_MIN, ESC_MAX);
         esc.writeMicroseconds(currentPulse);
         Serial.print("[ESC] Forward "); Serial.print(power);
         Serial.print("% - Pulse: "); Serial.print(currentPulse);
@@ -670,10 +649,8 @@ void loop() {
         currentMoveContext   = MOVE_CONTEXT_NONE;
         resetPID();
         int power = constrain(cmd.substring(3).toInt(), 0, 100);
-        float pulseLimit    = (MAX_SPEED_HARD_CAP / 15.0) * (ESC_STOP - ESC_MIN);
-        int minAllowedPulse = ESC_STOP - (int)pulseLimit;
         currentPulse = map(power, 0, 100, 1500, 1000);
-        currentPulse = constrain(currentPulse, minAllowedPulse, ESC_MAX);
+        currentPulse = constrain(currentPulse, ESC_MIN, ESC_MAX);
         esc.writeMicroseconds(currentPulse);
         Serial.print("[ESC] Reverse "); Serial.print(power);
         Serial.print("% - Pulse: "); Serial.print(currentPulse);
@@ -767,7 +744,7 @@ void loop() {
 // =============================================================
 
 void startMove(float inches, float speed, int context) {
-  maxMoveSpeed       = constrain(speed, 0.1, MAX_SPEED_HARD_CAP);
+  maxMoveSpeed       = max(speed, 0.1f);
   targetCounts       = (long)(inches * COUNTS_PER_INCH);
   movingToTarget     = true;
   moveStartTime      = millis();
@@ -940,8 +917,6 @@ bool moveToInches(float inches) {
     integ = constrain(integ, -5000, 5000);
     float output = 0.3 * err + 0.001 * integ + 0.1 * (err - lasterr);
     output = constrain(output, -300, 300);
-    if (currentSpeedInchesPerSec >  MAX_SPEED_HARD_CAP) output = min(output, 0.0f);
-    if (currentSpeedInchesPerSec < -MAX_SPEED_HARD_CAP) output = max(output, 0.0f);
     if (abs(output) < MIN_PULSE_OFFSET && abs(currentSpeedInchesPerSec) < 0.3) {
       output = (err > 0) ? MIN_PULSE_OFFSET : -MIN_PULSE_OFFSET;
     }
