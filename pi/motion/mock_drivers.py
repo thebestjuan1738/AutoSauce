@@ -65,19 +65,27 @@ class MockGripper:
 class MockExtruder:
     """Mock extruder driver for testing without hardware."""
 
+    def __init__(self):
+        self._plunger_met: bool = False
+
+    @property
+    def is_plunger_met(self) -> bool:
+        return self._plunger_met
+
     def home(self) -> None:
         log.info("  [MOCK] Extruder: homing")
         time.sleep(0.5)
+        self._plunger_met = False
         log.info("  [MOCK] Extruder: homed")
 
     def meet_plunger(self) -> None:
         log.info("  [MOCK] Extruder: meeting plunger...")
         time.sleep(1.0)
+        self._plunger_met = True
         log.info("  [MOCK] Extruder: plunger contact confirmed")
 
     def dispense(self, speed: str = "medium") -> None:
         log.info(f"  [MOCK] Extruder: dispensing at speed '{speed}'")
-        # Non-blocking - simulates continuous dispensing
 
     def stop_dispense(self) -> None:
         log.info("  [MOCK] Extruder: dispense stopped")
@@ -85,6 +93,7 @@ class MockExtruder:
     def retract(self) -> None:
         log.info("  [MOCK] Extruder: retracting")
         time.sleep(1.0)
+        self._plunger_met = False
         log.info("  [MOCK] Extruder: retracted")
 
 
