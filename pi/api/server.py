@@ -31,7 +31,8 @@ from pi.ordering.order_manager import OrderManager, OrderStatus
 from pi.ordering.sauce_config import get_coverage_levels, POSITIONS
 from pi.utils.logger import log, get_recent_logs
 from pi.motion.arduino_controller import ArduinoController
-from pi.motion.gripper import GPIOGripper, _CLOSE_TARGET_TICKS as _GRIPPER_CLOSE_TICKS
+from pi.motion.gripper import GPIOGripper
+from pi.motion.extruder import GPIOExtruder
 
 # ─── App ──────────────────────────────────────────────────────────────────────
 
@@ -206,10 +207,10 @@ def debug_test_gripper():
     """Full gripper cycle — close fully then open fully."""
     try:
         arduino = ArduinoController()
-        if not arduino.send_command(f"MOVE_GRIPPER:{_GRIPPER_CLOSE_TICKS}", timeout=15.0):
-            raise RuntimeError("MOVE_GRIPPER (close) timed out")
-        if not arduino.send_command("MOVE_GRIPPER:0", timeout=15.0):
-            raise RuntimeError("MOVE_GRIPPER:0 (open) timed out")
+        if not arduino.send_command("GRAB", timeout=15.0, done_marker="GRAB_DONE"):
+            raise RuntimeError("GRAB timed out")
+        if not arduino.send_command("RELEASE", timeout=15.0, done_marker="RELEASE_DONE"):
+            raise RuntimeError("RELEASE timed out")
         log.info("Debug: gripper full cycle complete")
         return {"success": True}
     except Exception as e:
@@ -219,13 +220,13 @@ def debug_test_gripper():
 
 @app.post("/api/debug/test-extruder")
 def debug_test_extruder():
-    """Full extruder cycle — dispense fully then retract fully."""
+    """Full extruder cycle — meet plunger then retract."""
     try:
         arduino = ArduinoController()
-        if not arduino.send_command(f"MOVE_EXTRUDER:{_EXTRUDER_DISPENSE_TICKS}", timeout=45.0):
-            raise RuntimeError("MOVE_EXTRUDER (dispense) timed out")
-        if not arduino.send_command("MOVE_EXTRUDER:0", timeout=45.0):
-            raise RuntimeError("MOVE_EXTRUDER:0 (retract) timed out")
+        if not arduino.send_command("MEETPLUNGER", timeout=45.0, done_marker="PLUNGER_DONE"):
+            raise RuntimeError("MEETPLUNGER timed out")
+        if not arduino.send_command("OPENEXT", timeout=45.0, done_marker="OPENEXT_DONE"):
+            raise RuntimeError("OPENEXT timed out")
         log.info("Debug: extruder full cycle complete")
         return {"success": True}
     except Exception as e:
@@ -259,16 +260,35 @@ def _manual(command: str, timeout: float = 20.0):
 
 @app.post("/api/manual/home-grabber")
 def manual_home_grabber():
-    return _manual("HOME_GRIPPER")
+    """Home the gripper to open position."""
+    try:
+        arduino = ArduinoController()
+        if not arduino.send_command("HOMEGRAB", timeout=20.0, done_marker="HOMEGRAB_DONE"):
+            raise RuntimeError("HOMEGRAB timed out")
+        return {"success": True}
+    except Exception as e:
+        log.error(f"Manual home-grabber failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/api/manual/home-extruder")
 def manual_home_extruder():
-    return _manual("HOME_EXTRUDER")
+    """Home the extruder to retracted position."""
+    try:
+        arduino = ArduinoController()
+        if not arduino.send_command("HOMEEXT", timeout=20.0, done_marker="HOMEEXT_DONE"):
+            raise RuntimeError("HOMEEXT timed out")
+        return {"success": True}
+    except Exception as e:
+        log.error(f"Manual home-extruder failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/api/manual/close-grabber")
 def manual_close_grabber():
+    """Close the gripper (grab)."""
     try:
-        GPIOGripper().close()
+        arduino = ArduinoController()
+        if not arduino.send_command("GRAB", timeout=15.0, done_marker="GRAB_DONE"):
+            raise RuntimeError("GRAB timed out")
         return {"success": True}
     except Exception as e:
         log.error(f"Manual close-grabber failed: {e}")
@@ -276,15 +296,39 @@ def manual_close_grabber():
 
 @app.post("/api/manual/open-grabber")
 def manual_open_grabber():
-    return _manual("OPEN_GRABBER")
+    """Open the gripper (release)."""
+    try:
+        arduino = ArduinoController()
+        if not arduino.send_command("RELEASE", timeout=15.0, done_marker="RELEASE_DONE"):
+            raise RuntimeError("RELEASE timed out")
+        return {"success": True}
+    except Exception as e:
+        log.error(f"Manual open-grabber failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/api/manual/open-extruder")
 def manual_open_extruder():
-    return _manual("OPEN_EXTRUDER")
+    """Retract the extruder to home position."""
+    try:
+        arduino = ArduinoController()
+        if not arduino.send_command("OPENEXT", timeout=45.0, done_marker="OPENEXT_DONE"):
+            raise RuntimeError("OPENEXT timed out")
+        return {"success": True}
+    except Exception as e:
+        log.error(f"Manual open-extruder failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/api/manual/meet-plunger")
 def manual_meet_plunger():
-    return _manual("MEET_PLUNGER", timeout=45.0)
+    """Drive extruder until plunger contact."""
+    try:
+        arduino = ArduinoController()
+        if not arduino.send_command("MEETPLUNGER", timeout=45.0, done_marker="PLUNGER_DONE"):
+            raise RuntimeError("MEETPLUNGER timed out")
+        return {"success": True}
+    except Exception as e:
+        log.error(f"Manual meet-plunger failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/manual/gantry-positions")
 def manual_gantry_positions():
