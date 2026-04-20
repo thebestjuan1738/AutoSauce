@@ -13,8 +13,8 @@ const int CYL_ENC     = 3;
 const int LIMIT_SW    = 9;
 
 // ---- Station Positions (mm from home) ----
-const long POS_HOTDOG = 268;
-const long POS_HEAT   = 438;
+const long POS_HOTDOG = 255;
+const long POS_HEAT   = 425;
 const long POS_SAUCE  = 739;
 const long POS_PICKUP = 1020;
 
