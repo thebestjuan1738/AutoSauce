@@ -439,15 +439,15 @@ class VESCGantry:
 
     def set_speed(self, ips: float) -> None:
         """
-        Set target move speed in inches/sec. Valid: 0.1 – MAX_SPEED_HARD_CAP (6.0).
-        Mirrors SPEED<in/s> command.
+        Set max move speed in inches/sec. Valid: 0.1 – MAX_SPEED_HARD_CAP (6.0).
+        Mirrors MSPD<in/s> command.
         """
         if ips <= 0.0 or ips > MAX_SPEED_HARD_CAP:
             raise ValueError(
                 f"Speed out of range: {ips} in/s (valid 0.1–{MAX_SPEED_HARD_CAP})"
             )
-        self._send(f"SPEED{ips:.2f}")
-        log.info("VESCGantry: SPEED%.2f in/s", ips)
+        self._send(f"MSPD{ips:.2f}")
+        log.info("VESCGantry: MSPD%.2f in/s", ips)
 
     def speed_on(self) -> None:
         """
@@ -549,8 +549,8 @@ class VESCGantry:
         )
 
         self._ser.reset_input_buffer()
-        # Set speed then flush [SPEED] ACK before issuing GOTO
-        self._send(f"SPEED{speed_ips:.2f}")
+        # Set max move speed then flush ACK before issuing GOTO
+        self._send(f"MSPD{speed_ips:.2f}")
         time.sleep(0.05)
         self._ser.reset_input_buffer()
         self._send(f"GOTO{position_in:.4f}")
