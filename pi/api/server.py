@@ -370,3 +370,16 @@ def manual_move_gantry_mm(mm: int):
     except Exception as e:
         log.error(f"Manual move-gantry-mm/{mm} failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/manual/home-gantry")
+def manual_home_gantry():
+    """Run the gantry homing routine (ZERO)."""
+    if _gantry is None:
+        raise HTTPException(status_code=503, detail="Gantry not initialised")
+    try:
+        _gantry.home()
+        log.info("Manual: gantry homed")
+        return {"success": True}
+    except Exception as e:
+        log.error(f"Manual home-gantry failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
