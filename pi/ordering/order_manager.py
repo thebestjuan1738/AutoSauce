@@ -160,8 +160,8 @@ class OrderManager:
         Args:
             level: "light" | "medium" | "heavy" - determines extrude speed
         """
-        # Extruder always runs at slowest speed; gantry sweep speed varies by level
-        extruder_speed = "slow"
+        # Extruder always runs at medium speed; gantry sweep speed varies by level
+        extruder_speed = "medium"
         level_to_sweep_ips = {
             "light":  10.0,
             "medium":  5.0,
