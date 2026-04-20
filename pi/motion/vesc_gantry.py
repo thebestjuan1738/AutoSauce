@@ -75,7 +75,8 @@ BOOT_TIMEOUT_S = 20.0
 TRAVEL_SPEED_IPS = TARGET_SPEED_IPS_DEFAULT
 
 # Slow speed used during the sauce dispense sweep (inches per second).
-SWEEP_SPEED_IPS = 0.5
+# Note: 0.5 in/s didn't have enough motor torque to maintain constant speed.
+SWEEP_SPEED_IPS = 1.0
 
 # Sentinel value imported by order_manager.py — pass as max_duty=SWEEP_MAX_DUTY
 # to move_to() to select SWEEP_SPEED_IPS instead of TRAVEL_SPEED_IPS.
