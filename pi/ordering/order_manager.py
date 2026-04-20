@@ -267,9 +267,9 @@ class OrderManager:
         log.info("Step 16: Conveyor → PICKUP station")
         self._conveyor.move_to_station("PICKUP")
 
-        # Step 17: Return gantry to 2 inches (50.8mm)
-        log.info("Step 17: Gantry → 2 inches (51mm)")
-        self._gantry.move_to(51)
+        # Step 17: Return gantry to dispense start position
+        log.info("Step 17: Gantry → dispense start position")
+        self._gantry.move_to(POSITIONS["dispense"])
 
         log.info("Sequence complete!")
 
