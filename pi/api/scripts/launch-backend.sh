@@ -13,13 +13,26 @@ docker stop sauce-backend 2>/dev/null || true
 docker rm sauce-backend 2>/dev/null || true
 
 # Start backend container in the foreground so systemd tracks the process.
-# Mount every /dev/ttyACM* and /dev/ttyUSB* device that exists.
-#   ttyACM* — Arduino Mega (gripper/extruder) and Uno (conveyor)
-#   ttyUSB* — CP210x UART bridge (gantry NodeMCU)
+# Mount ttyACM devices (Arduino Mega + Uno) and the gantry with a fixed name.
+#   ttyACM*    — Arduino Mega (gripper/extruder) and Uno (conveyor)
+#   ttyGANTRY  — CP210x UART bridge (gantry NodeMCU), fixed by udev rule
 DEVICE_FLAGS=""
-for dev in /dev/ttyACM* /dev/ttyUSB*; do
+for dev in /dev/ttyACM*; do
     [ -e "$dev" ] && DEVICE_FLAGS="$DEVICE_FLAGS --device $dev:$dev"
 done
+
+# Map the gantry's real device path but expose it as /dev/ttyGANTRY inside the
+# container. This keeps the container's device name stable even if the host
+# enumerates the CP210x as ttyUSB0, ttyUSB1, etc. on different boots.
+if [ -e /dev/ttyGANTRY ]; then
+    REAL_GANTRY=$(readlink -f /dev/ttyGANTRY)
+    DEVICE_FLAGS="$DEVICE_FLAGS --device $REAL_GANTRY:/dev/ttyGANTRY"
+else
+    # Fallback: map any ttyUSB devices if udev rule hasn't fired yet
+    for dev in /dev/ttyUSB*; do
+        [ -e "$dev" ] && DEVICE_FLAGS="$DEVICE_FLAGS --device $dev:$dev"
+    done
+fi
 
 exec docker run --name sauce-backend \
     -p 8080:8080 \

@@ -27,7 +27,7 @@ from pi.utils.logger import log
 # ─── Constants mirrored from firmware ────────────────────────────────────────
 
 # Serial
-GANTRY_PORT = "COM3" if sys.platform == "win32" else "/dev/ttyUSB0"
+GANTRY_PORT = "COM3" if sys.platform == "win32" else "/dev/ttyGANTRY"
 GANTRY_BAUD = 115200
 
 # ESC pulse widths (µs)
