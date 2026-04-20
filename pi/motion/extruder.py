@@ -26,8 +26,14 @@ class GPIOExtruder:
 
     def __init__(self):
         self.arduino = ArduinoController()
+        self._plunger_met: bool = False
         log.info("GPIOExtruder: Initializing via Arduino USB...")
         self.home()
+
+    @property
+    def is_plunger_met(self) -> bool:
+        """True if the extruder is currently at plunger contact position."""
+        return self._plunger_met
 
     def cleanup(self) -> None:
         """Cleanup logic (handled on Arduino)."""
@@ -43,6 +49,7 @@ class GPIOExtruder:
         log.info("GPIOExtruder: homing...")
         if not self.arduino.send_command("HOMEEXT", timeout=20.0, done_marker="HOMEEXT_DONE"):
             raise RuntimeError("GPIOExtruder: homing timed out or failed")
+        self._plunger_met = False
         log.info("GPIOExtruder: homing complete")
 
     def meet_plunger(self) -> None:
@@ -54,6 +61,7 @@ class GPIOExtruder:
         log.info("GPIOExtruder: meeting plunger...")
         if not self.arduino.send_command("MEETPLUNGER", timeout=45.0, done_marker="PLUNGER_DONE"):
             raise RuntimeError("GPIOExtruder: MEETPLUNGER timed out or failed")
+        self._plunger_met = True
         log.info("GPIOExtruder: plunger contact confirmed")
 
     def dispense(self, speed: str = "medium") -> None:
@@ -96,4 +104,5 @@ class GPIOExtruder:
         log.info("GPIOExtruder: retracting...")
         if not self.arduino.send_command("OPENEXT", timeout=45.0, done_marker="OPENEXT_DONE"):
             raise RuntimeError("GPIOExtruder: retract timed out or failed")
+        self._plunger_met = False
         log.info("GPIOExtruder: retract complete")

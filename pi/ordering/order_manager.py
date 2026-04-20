@@ -22,18 +22,14 @@ Full motion sequence per order:
     6.  Conveyor: Move to HEAT station
     7.  Lamp: ON for 10 seconds, then OFF
     8.  Conveyor: Move to SAUCE station
-    9.  Gantry: Move to dock position
-    10. Gripper: Close (grab sauce bottle)
-    11. Extruder: MEETPLUNGER (drive until contact)
-    12. Gantry: Move to sauce start position
-    13. Concurrent: Zigzag + Gantry sweep to sauce end + Extrude at user speed
-    14. When gantry reaches end: stop zigzag and extruding
-    15. Wait 5 seconds
-    16. Conveyor: Move to PICKUP station
-    17. Extruder: Retract
-    18. Gantry: Return to dock
-    19. Gripper: Release (drop bottle)
-    20. Gantry: Move to 2 inches (51mm)
+    9.  If plunger NOT already met: Gantry → dock, Gripper close, Extruder MEETPLUNGER
+    10. Gantry: Move to sauce start position
+    11. Concurrent: Zigzag + Gantry sweep to sauce end + Extrude at user speed
+    12. When gantry reaches end: stop zigzag and extruding
+    13. Wait 5 seconds
+    14. Conveyor: Move to PICKUP station
+    15. Gripper: Release (drop bottle)
+    16. Gantry: Move to 2 inches (51mm)
 
 The UI calls submit_order() and polls get_status() — that's the entire
 public interface. Nothing else in this file is meant to be called directly.
@@ -215,17 +211,22 @@ class OrderManager:
         # STEPS 9-12: PREPARE FOR DISPENSING (Gantry + Printhead)
         # ═══════════════════════════════════════════════════════════════════════
 
-        # Step 9: Gantry moves to dock
-        log.info("Step 9: Gantry → dock")
-        self._gantry.move_to(POSITIONS["dock"])
+        # Steps 9-11 are skipped if the extruder is already at plunger contact
+        # (i.e. the previous order left it extended — no retract between orders).
+        if self._extruder.is_plunger_met:
+            log.info("Steps 9-11: Skipping — plunger already at contact position")
+        else:
+            # Step 9: Gantry moves to dock
+            log.info("Step 9: Gantry → dock")
+            self._gantry.move_to(POSITIONS["dock"])
 
-        # Step 10: Gripper closes (grab sauce bottle)
-        log.info("Step 10: Gripper → CLOSE (grab bottle)")
-        self._gripper.close()
+            # Step 10: Gripper closes (grab sauce bottle)
+            log.info("Step 10: Gripper → CLOSE (grab bottle)")
+            self._gripper.close()
 
-        # Step 11: Extruder meets plunger (before gantry moves to dispense position)
-        log.info("Step 11: Extruder → MEETPLUNGER")
-        self._extruder.meet_plunger()
+            # Step 11: Extruder meets plunger (before gantry moves to dispense position)
+            log.info("Step 11: Extruder → MEETPLUNGER")
+            self._extruder.meet_plunger()
 
         # Step 12: Gantry moves to sauce start (dispense position)
         log.info("Step 12: Gantry → sauce start (dispense position)")
@@ -266,23 +267,15 @@ class OrderManager:
         self._conveyor.move_to_station("PICKUP")
 
         # ═══════════════════════════════════════════════════════════════════════
-        # STEPS 17-20: RETURN SAUCE BOTTLE
+        # STEPS 17-18: RETURN SAUCE BOTTLE
         # ═══════════════════════════════════════════════════════════════════════
 
-        # Step 17: Retract the extruder
-        log.info("Step 17: Extruder → retract")
-        self._extruder.retract()
-
-        # Step 18: Return gantry to dock
-        log.info("Step 18: Gantry → dock")
-        self._gantry.move_to(POSITIONS["dock"])
-
-        # Step 19: Release the gripper (drop bottle)
-        log.info("Step 19: Gripper → RELEASE (drop bottle)")
+        # Step 17: Release the gripper (drop bottle)
+        log.info("Step 17: Gripper → RELEASE (drop bottle)")
         self._gripper.open()
 
-        # Step 20: Return gantry to 2 inches (50.8mm)
-        log.info("Step 20: Gantry → 2 inches (51mm)")
+        # Step 18: Return gantry to 2 inches (50.8mm)
+        log.info("Step 18: Gantry → 2 inches (51mm)")
         self._gantry.move_to(51)  # 2 inches = 50.8mm, rounded to 51
 
         log.info("Sequence complete!")
