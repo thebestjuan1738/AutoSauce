@@ -13,26 +13,26 @@ docker stop sauce-backend 2>/dev/null || true
 docker rm sauce-backend 2>/dev/null || true
 
 # Start backend container in the foreground so systemd tracks the process.
-# Mount ttyACM devices (Arduino Mega + Uno) and the gantry with a fixed name.
-#   ttyACM*    — Arduino Mega (gripper/extruder) and Uno (conveyor)
-#   ttyGANTRY  — CP210x UART bridge (gantry NodeMCU), fixed by udev rule
-DEVICE_FLAGS=""
-for dev in /dev/ttyACM*; do
-    [ -e "$dev" ] && DEVICE_FLAGS="$DEVICE_FLAGS --device $dev:$dev"
-done
+# All three controllers get fixed names inside the container via udev symlinks,
+# so the container mapping is stable regardless of enumeration order.
+#
+#   ttyGANTRY    — CP210x (gantry NodeMCU ESP8266)
+#   ttyPRINTHEAD — Arduino Mega (gripper + extruder)
+#   ttyCONVEYOR  — Arduino Uno (conveyor + cylinder + lamp)
 
-# Map the gantry's real device path but expose it as /dev/ttyGANTRY inside the
-# container. This keeps the container's device name stable even if the host
-# enumerates the CP210x as ttyUSB0, ttyUSB1, etc. on different boots.
-if [ -e /dev/ttyGANTRY ]; then
-    REAL_GANTRY=$(readlink -f /dev/ttyGANTRY)
-    DEVICE_FLAGS="$DEVICE_FLAGS --device $REAL_GANTRY:/dev/ttyGANTRY"
-else
-    # Fallback: map any ttyUSB devices if udev rule hasn't fired yet
-    for dev in /dev/ttyUSB*; do
-        [ -e "$dev" ] && DEVICE_FLAGS="$DEVICE_FLAGS --device $dev:$dev"
-    done
-fi
+_map_fixed_device() {
+    local symlink="$1"
+    if [ -e "$symlink" ]; then
+        local real
+        real=$(readlink -f "$symlink")
+        echo "--device $real:$symlink"
+    fi
+}
+
+DEVICE_FLAGS=""
+DEVICE_FLAGS="$DEVICE_FLAGS $(_map_fixed_device /dev/ttyGANTRY)"
+DEVICE_FLAGS="$DEVICE_FLAGS $(_map_fixed_device /dev/ttyPRINTHEAD)"
+DEVICE_FLAGS="$DEVICE_FLAGS $(_map_fixed_device /dev/ttyCONVEYOR)"
 
 exec docker run --name sauce-backend \
     -p 8080:8080 \

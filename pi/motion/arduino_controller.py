@@ -36,13 +36,19 @@ class ArduinoController:
         (0x2341, 0x0043),
     })
 
+    _FIXED_PORT = "COM4" if sys.platform == "win32" else "/dev/ttyPRINTHEAD"
+
     @staticmethod
     def _candidate_ports() -> list:
         """
         Return an ordered list of ports to try, skipping known VESC ports.
-        Works regardless of USB hub plug-in order.
-        Priority: exact VID match → description keyword → everything else.
+        Priority: fixed udev symlink → exact VID match → description keyword → everything else.
         """
+        import os
+        # Prefer the fixed udev symlink — stable across re-enumerations.
+        if os.path.exists(ArduinoController._FIXED_PORT):
+            return [ArduinoController._FIXED_PORT]
+
         arduino_keywords = ('arduino', 'ch340', 'ch341', 'ftdi', 'usb serial')
 
         def _sort_key(name):
@@ -55,9 +61,9 @@ class ArduinoController:
 
         for p in serial.tools.list_ports.comports():
             if p.vid == ArduinoController._VESC_VID:
-                continue  # skip VESC — never try it as an Arduino
+                continue
             if (p.vid, p.pid) in ArduinoController._SKIP_DEVICES:
-                continue  # skip gantry CP210x and conveyor Uno
+                continue
             desc = (p.description or '').lower()
             if p.vid in ArduinoController._ARDUINO_VIDS:
                 by_vid.append(p.device)
@@ -66,7 +72,6 @@ class ArduinoController:
             else:
                 others.append(p.device)
 
-        # On Linux, restrict the last-resort fallback to ttyACM/ttyUSB paths only
         if not sys.platform.startswith('win'):
             others = [p for p in others if '/dev/ttyACM' in p or '/dev/ttyUSB' in p]
 

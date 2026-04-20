@@ -40,7 +40,7 @@ from pi.utils.logger import log
 # ─── Config ───────────────────────────────────────────────────────────────────
 
 # Fallback port if VID/PID detection fails.
-CONVEYOR_PORT = "COM5" if sys.platform == "win32" else "/dev/ttyACM1"
+CONVEYOR_PORT = "COM5" if sys.platform == "win32" else "/dev/ttyCONVEYOR"
 CONVEYOR_BAUD = 9600
 
 # Time to wait for the Arduino boot banner on first connect.
