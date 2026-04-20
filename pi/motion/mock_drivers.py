@@ -25,9 +25,9 @@ class MockGantry:
     def __init__(self):
         self._position = 0   # starts at home
 
-    def move_to(self, position_mm: int, max_duty: float = 1.0) -> None:
-        log.info(f"  [MOCK] Gantry: {self._position}mm → {position_mm}mm (duty={max_duty})")
-        time.sleep(0.2)        # simulate travel time
+    def move_to(self, position_mm: int, max_duty: float = 1.0, speed_ips: float = None) -> None:
+        log.info(f"  [MOCK] Gantry: {self._position}mm → {position_mm}mm")
+        time.sleep(0.2)
         self._position = position_mm
 
     def home(self) -> None:
