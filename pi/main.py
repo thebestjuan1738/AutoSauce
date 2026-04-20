@@ -37,6 +37,12 @@ USE_VESC_GANTRY = os.environ.get("USE_VESC_GANTRY", "1") != "0"
 #   USE_ARDUINO=1  → open /dev/ttyACM0 or /dev/ttyUSB0 (requires --device flag in Docker)
 USE_ARDUINO = os.environ.get("USE_ARDUINO", "1") != "0"
 
+# True → use real GPIOConveyor (Arduino Uno over USB) even when USE_MOCK is True.
+# Can be overridden via the USE_CONVEYOR environment variable:
+#   USE_CONVEYOR=0  → fall back to MockConveyor (no conveyor Arduino needed)
+#   USE_CONVEYOR=1  → open conveyor serial port (requires --device flag in Docker)
+USE_CONVEYOR = os.environ.get("USE_CONVEYOR", "1") != "0"
+
 
 def build_order_manager() -> OrderManager:
     if USE_MOCK and not USE_VESC_GANTRY:
@@ -86,24 +92,29 @@ def build_order_manager() -> OrderManager:
         gripper  = MockGripper()
         extruder = MockExtruder()
 
-    if USE_MOCK:
-        # Hardware-in-the-loop: real VESC gantry + optional real Arduino, conveyor still mocked.
-        return OrderManager(
-            gantry=vesc_gantry,
-            gripper=gripper,
-            extruder=extruder,
-            conveyor=MockConveyor(),
-        )
+    # Build conveyor — real Arduino Uno or mock.
+    if USE_CONVEYOR or not USE_MOCK:
+        from pi.motion.conveyor import GPIOConveyor
+        try:
+            conveyor = GPIOConveyor()
+        except Exception as exc:
+            if not USE_MOCK:
+                raise
+            log.warning(
+                f"Conveyor Arduino unavailable ({exc}). "
+                "Falling back to MockConveyor. "
+                "Set USE_CONVEYOR=0 to silence this warning."
+            )
+            conveyor = MockConveyor()
+    else:
+        conveyor = MockConveyor()
 
-    # Full real drivers (Pi only).
-    from pi.motion.extruder import GPIOExtruder
-    from pi.motion.gripper  import GPIOGripper
-    from pi.motion.conveyor import GPIOConveyor
+    # Return OrderManager with all built drivers (real or mock depending on flags).
     return OrderManager(
         gantry=vesc_gantry,
-        gripper=GPIOGripper(),
-        extruder=GPIOExtruder(),
-        conveyor=GPIOConveyor(),
+        gripper=gripper,
+        extruder=extruder,
+        conveyor=conveyor,
     )
 
 
