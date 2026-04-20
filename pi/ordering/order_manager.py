@@ -44,6 +44,10 @@ from enum import Enum, auto
 from typing import Optional
 
 from pi.ordering.sauce_config import get_profile, POSITIONS, DISPENSE_SWEEP_END_MM
+
+# How many seconds before the gantry reaches end to stop extrusion.
+# Tune this to compensate for extruder coast/lag.
+EXTRUDER_EARLY_STOP_S = 0.4
 from pi.motion.vesc_gantry import SWEEP_MAX_DUTY
 from pi.utils.logger import log
 
@@ -248,13 +252,28 @@ class OrderManager:
         self._extruder.dispense(speed=extruder_speed)
         time.sleep(0.75)
 
+        # Schedule extruder stop slightly before the gantry reaches its end position
+        # so sauce doesn't over-run past the hotdog.
+        sweep_distance_in = (DISPENSE_SWEEP_END_MM - POSITIONS["dispense"]) / 25.4
+        sweep_duration_s = sweep_distance_in / sweep_speed_ips
+        early_stop_delay_s = max(0.0, sweep_duration_s - EXTRUDER_EARLY_STOP_S)
+        log.info(
+            f"Step 13: Extruder will stop in {early_stop_delay_s:.2f}s "
+            f"({EXTRUDER_EARLY_STOP_S}s before estimated gantry end)"
+        )
+        stop_timer = threading.Timer(early_stop_delay_s, self._extruder.stop_dispense)
+        stop_timer.start()
+
         # Gantry sweeps to sauce end at level-dependent speed (this blocks until complete)
         log.info(f"Step 13: Gantry sweeping to sauce end at {sweep_speed_ips} in/s...")
-        self._gantry.move_to(DISPENSE_SWEEP_END_MM, speed_ips=sweep_speed_ips)
+        try:
+            self._gantry.move_to(DISPENSE_SWEEP_END_MM, speed_ips=sweep_speed_ips)
+        finally:
+            stop_timer.cancel()          # no-op if it already fired
+            self._extruder.stop_dispense()  # ensure stopped regardless
 
-        # Step 14: When gantry reaches end, stop zigzag and extruding
-        log.info("Step 14: Gantry reached end — stopping zigzag and extruding")
-        self._extruder.stop_dispense()
+        # Step 14: When gantry reaches end, stop zigzag
+        log.info("Step 14: Gantry reached end — stopping zigzag")
         self._conveyor.stop_zigzag()
 
         # ═══════════════════════════════════════════════════════════════════════
