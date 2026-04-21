@@ -59,6 +59,21 @@ function handleQuantitySelect(event) {
 quantityButtons.forEach(btn => btn.addEventListener('click', handleQuantitySelect));
 
 /* -----------------------------------------------
+   Serial helpers — fire-and-forget, never blocks main flow
+----------------------------------------------- */
+
+async function sendSerialCommand(endpoint) {
+  try {
+    const res = await fetch(`${API_BASE}${endpoint}`, { method: 'POST' });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);
+    console.log(`[SauceBot] Serial ${endpoint}: ${data.arduino_response}`);
+  } catch (err) {
+    console.warn(`[SauceBot] Serial command ${endpoint} failed:`, err.message);
+  }
+}
+
+/* -----------------------------------------------
    START button state
 ----------------------------------------------- */
 
@@ -109,7 +124,8 @@ startButton.addEventListener('click', async function () {
     const { order_id } = await response.json();
     console.log(`[SauceBot] Order submitted: ${order_id}`);
 
-    // ── Step 2: Update overlay and start polling ──────────────
+    // ── Step 2: Turn on Arduino LED, update overlay, start polling ──
+    sendSerialCommand('/sauce/start');
     showOverlay(`Dispensing ${selectedQuantity} sauce...`);
     startPolling(order_id);
 
@@ -140,7 +156,11 @@ function startPolling(order_id) {
 
       if (data.status === 'DONE') {
         stopPolling();
-        showOverlay('Done! Enjoy your sandwich.');
+        sendSerialCommand('/sauce/stop');
+        // Snap bar to 100% before showing completion message
+        progressFill.style.transition = 'width 0.3s ease';
+        progressFill.style.width = '100%';
+        messageText.textContent = 'Done! Enjoy your sandwich.';
         setTimeout(() => {
           hideOverlay();
           resetUI();
@@ -149,6 +169,7 @@ function startPolling(order_id) {
 
       else if (data.status === 'FAILED') {
         stopPolling();
+        sendSerialCommand('/sauce/stop');
         showError(data.error || 'Something went wrong on the machine.');
       }
 
@@ -157,6 +178,7 @@ function startPolling(order_id) {
     } catch (err) {
       console.error('[SauceBot] Polling error:', err);
       stopPolling();
+      sendSerialCommand('/sauce/stop');
       showError(`Lost connection to machine.\n${err.message}`);
     }
   }, POLL_INTERVAL);
@@ -182,8 +204,8 @@ function showOverlay(message) {
   progressFill.style.width = '0%';
   requestAnimationFrame(() => {
     requestAnimationFrame(() => {
-      // Use a long duration so it fills slowly while polling
-      progressFill.style.transition = `width 30s linear`;
+      // Fill most of the bar over the expected dispense duration
+      progressFill.style.transition = `width 10s linear`;
       progressFill.style.width = '95%';   // Never quite reaches 100% until DONE
     });
   });
@@ -327,3 +349,124 @@ logRefreshBtn.addEventListener('click', fetchLogs);
   }, { passive: true });
 
 }(logList));
+
+/* -----------------------------------------------
+   Debug buttons + Manual controls modal
+----------------------------------------------- */
+
+const debugManualBtn   = document.getElementById('debug-manual-btn');
+const debugRestartBtn  = document.getElementById('debug-restart-btn');
+const manualModal      = document.getElementById('manual-modal');
+const manualModalClose = document.getElementById('manual-modal-close');
+const gantryModal      = document.getElementById('gantry-modal');
+const gantryModalClose = document.getElementById('gantry-modal-close');
+const gantryLocationGrid = document.getElementById('gantry-location-grid');
+
+const debugHomeGrabberBtn  = document.getElementById('debug-home-grabber-btn');
+const debugHomeExtruderBtn = document.getElementById('debug-home-extruder-btn');
+const debugCloseGrabberBtn = document.getElementById('debug-close-grabber-btn');
+const debugOpenGrabberBtn  = document.getElementById('debug-open-grabber-btn');
+const debugOpenExtruderBtn = document.getElementById('debug-open-extruder-btn');
+const debugMeetPlungerBtn  = document.getElementById('debug-meet-plunger-btn');
+const debugHomeGantryBtn   = document.getElementById('debug-home-gantry-btn');
+const debugMoveGantryBtn   = document.getElementById('debug-move-gantry-btn');
+const gantryCustomInput    = document.getElementById('gantry-custom-input');
+const gantryCustomBtn      = document.getElementById('gantry-custom-btn');
+const gantryCurrentPos     = document.getElementById('gantry-current-pos');
+
+// Open / close manual controls modal
+debugManualBtn.addEventListener('click', () => { manualModal.hidden = false; });
+manualModalClose.addEventListener('click', () => { manualModal.hidden = true; });
+manualModal.addEventListener('click', e => {
+  if (e.target === manualModal) manualModal.hidden = true;
+});
+
+async function fetchGantryCurrentPosition() {
+  try {
+    const res = await fetch(`${API_BASE}/api/manual/gantry-position`);
+    const data = await res.json();
+    gantryCurrentPos.textContent = data.position_mm != null
+      ? `Current position: ${data.position_mm} mm`
+      : 'Current position: unavailable';
+  } catch (err) {
+    gantryCurrentPos.textContent = 'Current position: unavailable';
+  }
+}
+
+// Move Gantry — fetch positions then open location picker
+debugMoveGantryBtn.addEventListener('click', async () => {
+  gantryCurrentPos.textContent = 'Current position: loading…';
+  fetchGantryCurrentPosition();
+
+  try {
+    const res = await fetch(`${API_BASE}/api/manual/gantry-positions`);
+    const { positions } = await res.json();
+
+    // Build a button for each location
+    gantryLocationGrid.innerHTML = positions.map(loc =>
+      `<button class="log-debug-btn" data-location="${loc}">${loc.charAt(0).toUpperCase() + loc.slice(1)}</button>`
+    ).join('');
+
+    gantryLocationGrid.querySelectorAll('button').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const loc = btn.dataset.location;
+        gantryModal.hidden = true;
+        debugAction(`/api/manual/move-gantry/${loc}`, btn, 'Moving...');
+        fetchLogs();
+      });
+    });
+
+    gantryModal.hidden = false;
+  } catch (err) {
+    console.warn('[SauceBot] Could not load gantry positions:', err.message);
+  }
+});
+
+gantryModalClose.addEventListener('click', () => { gantryModal.hidden = true; });
+gantryModal.addEventListener('click', e => {
+  if (e.target === gantryModal) gantryModal.hidden = true;
+});
+
+// Slider label sync
+const gantrySliderVal = document.getElementById('gantry-slider-val');
+gantryCustomInput.addEventListener('input', () => {
+  gantrySliderVal.textContent = `${gantryCustomInput.value} mm`;
+});
+
+// Custom position move
+gantryCustomBtn.addEventListener('click', () => {
+  const mm = parseInt(gantryCustomInput.value, 10);
+  gantryModal.hidden = true;
+  debugAction(`/api/manual/move-gantry-mm/${mm}`, gantryCustomBtn, 'Moving...');
+  fetchLogs();
+});
+
+async function debugAction(endpoint, btn, workingLabel) {
+  const original = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = workingLabel;
+  try {
+    const res = await fetch(`${API_BASE}${endpoint}`, { method: 'POST' });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);
+    btn.textContent = 'Done!';
+  } catch (err) {
+    btn.textContent = 'Error';
+    console.warn(`[SauceBot] ${endpoint} failed:`, err.message);
+  } finally {
+    fetchLogs();
+    setTimeout(() => {
+      btn.textContent = original;
+      btn.disabled = false;
+    }, 2000);
+  }
+}
+
+debugHomeGrabberBtn.addEventListener('click',  () => debugAction('/api/manual/home-grabber',  debugHomeGrabberBtn,  'Running...'));
+debugHomeExtruderBtn.addEventListener('click', () => debugAction('/api/manual/home-extruder', debugHomeExtruderBtn, 'Running...'));
+debugCloseGrabberBtn.addEventListener('click', () => debugAction('/api/manual/close-grabber', debugCloseGrabberBtn, 'Running...'));
+debugOpenGrabberBtn.addEventListener('click',  () => debugAction('/api/manual/open-grabber',  debugOpenGrabberBtn,  'Running...'));
+debugOpenExtruderBtn.addEventListener('click', () => debugAction('/api/manual/open-extruder', debugOpenExtruderBtn, 'Running...'));
+debugMeetPlungerBtn.addEventListener('click',  () => debugAction('/api/manual/meet-plunger',  debugMeetPlungerBtn,  'Running...'));
+debugHomeGantryBtn.addEventListener('click',   () => debugAction('/api/manual/home-gantry',   debugHomeGantryBtn,   'Homing...'));
+debugRestartBtn.addEventListener('click',      () => debugAction('/api/debug/restart',         debugRestartBtn,      'Restarting...'));

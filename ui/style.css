@@ -495,6 +495,114 @@ header h1 {
   background: rgba(165,180,252,0.1);
 }
 
+/* -- Debug button bar -------------------------------- */
+.log-debug-bar {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  padding: 10px 16px 12px;
+  border-bottom: 1px solid rgba(255,255,255,0.08);
+  flex-shrink: 0;
+}
+
+/* Manual Controls button centred on its own row above Restart */
+#debug-manual-btn {
+  grid-column: 1 / -1;
+  max-width: 200px;
+  justify-self: center;
+}
+
+/* Restart button spans full width on its own row */
+.log-debug-btn--danger {
+  grid-column: 1 / -1;
+  border-color: rgba(239,68,68,0.5);
+  background: rgba(239,68,68,0.12);
+  color: #fca5a5;
+}
+.log-debug-btn--danger:hover {
+  background: rgba(239,68,68,0.25);
+  color: #f87171;
+  border-color: rgba(239,68,68,0.7);
+}
+
+/* -- Manual controls modal ------------------------- */
+.manual-modal {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.55);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+  z-index: 600;
+}
+.manual-modal[hidden] {
+  display: none;
+}
+
+.manual-modal-card {
+  background: #1e1e2e;
+  border: 1px solid rgba(99, 102, 241, 0.45);
+  border-radius: 18px;
+  padding: 20px;
+  width: min(420px, 92vw);
+  box-shadow: 0 20px 60px rgba(0,0,0,0.5);
+}
+
+.manual-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 14px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid rgba(255,255,255,0.08);
+}
+.manual-modal-header span {
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 3px;
+  text-transform: uppercase;
+  color: #a5b4fc;
+}
+
+.manual-modal-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.manual-modal-grid--full {
+  grid-column: 1 / -1;
+}
+
+.log-debug-btn {
+  min-height: 42px;
+  padding: 8px 12px;
+  border: 1px solid rgba(99,102,241,0.5);
+  background: rgba(99,102,241,0.12);
+  color: #c4b5fd;
+  border-radius: 10px;
+  font-family: inherit;
+  font-size: 0.82rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+  -webkit-tap-highlight-color: transparent;
+}
+.log-debug-btn:hover {
+  background: rgba(99,102,241,0.25);
+  border-color: rgba(99,102,241,0.75);
+  color: #ddd6fe;
+}
+.log-debug-btn:active {
+  background: rgba(99,102,241,0.4);
+}
+.log-debug-btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
 /* -- Log list ---------------------------------------- */
 .log-list {
   list-style: none;
@@ -545,4 +653,66 @@ header h1 {
   color: #4b5563;
   text-align: center;
   padding: 24px 0;
+}
+
+/* -- Gantry modal: current position label ---------- */
+.gantry-current-pos {
+  font-size: 0.75rem;
+  letter-spacing: 1.5px;
+  color: #6b7280;
+  text-align: center;
+  margin: -4px 0 10px;
+}
+
+/* -- Gantry modal: custom position row ------------- */
+.gantry-custom-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.gantry-slider-wrap {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.gantry-slider-val {
+  font-size: 1.6rem;
+  font-weight: 800;
+  letter-spacing: 2px;
+  color: #a5b4fc;
+  text-align: center;
+  line-height: 1;
+  margin-bottom: 6px;
+}
+
+.gantry-slider-ticks {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 3px;
+  font-size: 0.65rem;
+  color: #4b5563;
+  letter-spacing: 0.5px;
+}
+
+.gantry-custom-input {
+  width: 100%;
+  accent-color: #818cf8;
+  cursor: pointer;
+  height: 6px;
+}
+.gantry-custom-input::-webkit-slider-thumb {
+  width: 20px;
+  height: 20px;
+}
+.gantry-custom-input::-moz-range-thumb {
+  width: 20px;
+  height: 20px;
+  border: none;
+  background: #818cf8;
+  border-radius: 50%;
 }

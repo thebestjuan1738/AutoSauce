@@ -16,7 +16,7 @@ import os
 import uvicorn
 from pi.ordering.order_manager import OrderManager
 from pi.motion.mock_drivers import MockGantry, MockGripper, MockExtruder, MockConveyor
-from pi.api.server import app, set_order_manager, set_gantry
+from pi.api.server import app, set_order_manager
 from pi.utils.logger import log
 
 # ── Driver toggle ──────────────────────────────────────────────────────────────
@@ -31,27 +31,16 @@ USE_MOCK = True
 #   USE_VESC_GANTRY=1  → open /dev/ttyACM0 (requires --device flag in Docker)
 USE_VESC_GANTRY = os.environ.get("USE_VESC_GANTRY", "1") != "0"
 
-# True → use real GPIOGripper + GPIOExtruder (Arduino over USB) even when USE_MOCK is True.
-# Can be overridden via the USE_ARDUINO environment variable:
-#   USE_ARDUINO=0  → fall back to MockGripper/MockExtruder (no Arduino needed)
-#   USE_ARDUINO=1  → open /dev/ttyACM0 or /dev/ttyUSB0 (requires --device flag in Docker)
-USE_ARDUINO = os.environ.get("USE_ARDUINO", "1") != "0"
-
-# True → use real GPIOConveyor (Arduino Uno over USB) even when USE_MOCK is True.
-# Can be overridden via the USE_CONVEYOR environment variable:
-#   USE_CONVEYOR=0  → fall back to MockConveyor (no conveyor Arduino needed)
-#   USE_CONVEYOR=1  → open conveyor serial port (requires --device flag in Docker)
-USE_CONVEYOR = os.environ.get("USE_CONVEYOR", "1") != "0"
-
 
 def build_order_manager() -> OrderManager:
-    if USE_MOCK and not USE_VESC_GANTRY:
-        return OrderManager(
-            gantry=MockGantry(),
-            gripper=MockGripper(),
-            extruder=MockExtruder(),
-            conveyor=MockConveyor(),
-        )
+    from pi.motion.mock_drivers import MockGantry, MockExtruder, MockConveyor
+    from pi.motion.gripper import GPIOGripper
+    return OrderManager(
+        gantry=MockGantry(),
+        gripper=GPIOGripper(),
+        extruder=MockExtruder(),
+        conveyor=MockConveyor(),
+    )
 
     # Lazy import so the serial port is only opened when actually needed.
     import serial.serialutil
@@ -71,50 +60,24 @@ def build_order_manager() -> OrderManager:
         )
         vesc_gantry = MockGantry()
 
-    # Build gripper + extruder — real Arduino or mock.
-    if USE_ARDUINO or not USE_MOCK:
-        from pi.motion.gripper  import GPIOGripper
-        from pi.motion.extruder import GPIOExtruder
-        try:
-            gripper  = GPIOGripper()
-            extruder = GPIOExtruder()
-        except Exception as exc:
-            if not USE_MOCK:
-                raise
-            log.warning(
-                f"Arduino unavailable ({exc}). "
-                "Falling back to MockGripper/MockExtruder. "
-                "Set USE_ARDUINO=0 to silence this warning."
-            )
-            gripper  = MockGripper()
-            extruder = MockExtruder()
-    else:
-        gripper  = MockGripper()
-        extruder = MockExtruder()
+    if USE_MOCK:
+        # Hardware-in-the-loop: real VESC gantry, everything else mocked.
+        return OrderManager(
+            gantry=vesc_gantry,
+            gripper=MockGripper(),
+            extruder=MockExtruder(),
+            conveyor=MockConveyor(),
+        )
 
-    # Build conveyor — real Arduino Uno or mock.
-    if USE_CONVEYOR or not USE_MOCK:
-        from pi.motion.conveyor import GPIOConveyor
-        try:
-            conveyor = GPIOConveyor()
-        except Exception as exc:
-            if not USE_MOCK:
-                raise
-            log.warning(
-                f"Conveyor Arduino unavailable ({exc}). "
-                "Falling back to MockConveyor. "
-                "Set USE_CONVEYOR=0 to silence this warning."
-            )
-            conveyor = MockConveyor()
-    else:
-        conveyor = MockConveyor()
-
-    # Return OrderManager with all built drivers (real or mock depending on flags).
+    # Full real drivers (Pi only).
+    from pi.motion.extruder import GPIOExtruder
+    from pi.motion.gripper  import GPIOGripper
+    from pi.motion.conveyor import GPIOConveyor
     return OrderManager(
         gantry=vesc_gantry,
-        gripper=gripper,
-        extruder=extruder,
-        conveyor=conveyor,
+        gripper=GPIOGripper(),
+        extruder=GPIOExtruder(),
+        conveyor=GPIOConveyor(),
     )
 
 
@@ -123,7 +86,6 @@ def main():
 
     om = build_order_manager()
     set_order_manager(om)   # give the API access to the order manager
-    set_gantry(om.gantry)   # share the same gantry instance with manual endpoints
     om.start()              # start the background worker thread
 
     log.info("Starting API server on http://localhost:8080")

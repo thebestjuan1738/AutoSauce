@@ -1,0 +1,546 @@
+"""
+test_gantry.py — Interactive gantry tester for the HiLetGo NodeMCU ESP8266 controller.
+
+USB plugs directly into the HiLetGo — no Arduino board involved.
+Run from the repo root:
+    python test_gantry.py          (Windows)
+    python3 test_gantry.py         (Pi / Linux)
+
+Exposes every firmware command. Type HELP for the full command list.
+"""
+
+from pi.motion.vesc_gantry import (
+    VESCGantry,
+    MAX_TRAVEL_INCHES,
+    MAX_SPEED_HARD_CAP,
+    SWEEP_MAX_DUTY,
+    SWEEP_SPEED_IPS,
+    TRAVEL_SPEED_IPS,
+)
+
+MAX_TRAVEL_MM = MAX_TRAVEL_INCHES * 25.4   # ~342.9 mm
+
+import time as _time
+
+
+def _analyse_speed(speeds, esc_samples, target_ips, clamp, msp, speed_ctrl=True):
+    """
+    Print a speed analysis summary from a list of (abs_speed, esc_offset) samples.
+    When target_ips is None (open-loop FWD/REV run) a simplified summary is shown.
+    When speed_ctrl is False (RUNOFF / raw PID run) the MIN_PULSE_OFFSET floor
+    analysis is skipped — it does not apply when speed control is off.
+    """
+    if not speeds:
+        return
+    abs_spd = [abs(s) for s in speeds]
+
+    print("  ─── Speed analysis ───────────────────────────────")
+    print(f"  Peak speed        : {max(abs_spd):.3f} in/s")
+    print(f"  Avg speed         : {sum(abs_spd)/len(abs_spd):.3f} in/s  ({len(abs_spd)} samples)")
+
+    if not speed_ctrl:
+        # Raw PID mode: ESC output scales with position error and is not floored
+        # at MIN_PULSE_OFFSET.  Show peak-speed / motor-max estimate only.
+        clamp_speeds = [s for s, e in esc_samples if e >= clamp - 5 and s > 0.2]
+        if clamp_speeds:
+            est_max_raw = max(clamp_speeds)
+            print(f"  Speed @ full clamp: {est_max_raw:.1f} in/s  (ESC offset={clamp})")
+        print(f"  Mode              : raw PID (SPEEDOFF) — no ESC floor")
+        print(f"  Note: PID output ∝ position error; clamp={clamp} limits max speed.")
+        print(f"        Reduce KD to dampen overshoot; reduce KP to slow approach.")
+        print("  ──────────────────────────────────────────────────")
+        return
+
+    CRUISE_ESC_OFFSET = 100  # firmware MIN_PULSE_OFFSET
+
+    # Separate samples by ESC zone
+    floor_speeds   = [s for s, e in esc_samples if abs(e - CRUISE_ESC_OFFSET) <= 5 and s > 0.2]
+    neutral_speeds = [s for s, e in esc_samples if e < 10 and s > 0.2]
+
+    # Bang-bang detection: ESC alternates between floor and neutral throughout the move.
+    # When bang-bang, floor_speeds are ramp-up samples (not steady state) and
+    # neutral_speeds (motor coasting after each burst) better approximate the
+    # steady-state speed the motor reaches when ESC is held at MIN_PULSE_OFFSET.
+    bang_bang = len(floor_speeds) > 3 and len(neutral_speeds) > 3
+    if bang_bang:
+        neutral_sorted = sorted(neutral_speeds)
+        floor_speed = neutral_sorted[int(0.50 * len(neutral_sorted))]  # median coasting speed
+    else:
+        floor_speed = (sum(floor_speeds) / len(floor_speeds)) if floor_speeds else (sum(abs_spd) / len(abs_spd))
+
+    est_max = floor_speed * (clamp / CRUISE_ESC_OFFSET) if floor_speed > 0 else msp
+
+    if bang_bang:
+        print(f"  Bang-bang detected: {len(neutral_speeds)} neutral phases, {len(floor_speeds)} floor phases")
+        print(f"  Floor speed (est) : ~{floor_speed:.1f} in/s  "
+              f"(median coasting speed — motor steady-state at ESC offset={CRUISE_ESC_OFFSET})")
+    else:
+        print(f"  Avg @ min-pulse   : {floor_speed:.2f} in/s  "
+              f"({len(floor_speeds)} cruise samples at ESC offset={CRUISE_ESC_OFFSET})")
+    print(f"  Est. motor max    : {est_max:.1f} in/s  "
+          f"(extrapolated at CLAMP={clamp})")
+    print(f"  Min controllable  : ~{floor_speed:.1f} in/s  "
+          "(limited by MIN_PULSE_OFFSET=100, hardcoded in firmware)")
+
+    if target_ips is not None:
+        print(f"  Target speed      : {target_ips:.2f} in/s")
+        print()
+        if target_ips < floor_speed * 0.85:
+            fw_min = int(CRUISE_ESC_OFFSET * target_ips / floor_speed) if floor_speed > 0 else 30
+            print(f"  ⚠ TARGET {target_ips:.2f} in/s IS BELOW THE MINIMUM CONTROLLABLE SPEED")
+            print(f"    The firmware floors all output at MIN_PULSE_OFFSET=100.")
+            print(f"    At that floor the motor runs at ~{floor_speed:.1f} in/s regardless of SPEED setting.")
+            if bang_bang:
+                print(f"    Bang-bang: motor bursts to ~{floor_speed:.1f} in/s then cuts to neutral repeatedly.")
+            else:
+                print(f"    Speed feedback correction is capped by firmware")
+                print(f"    and cannot pull output below the 100-unit floor.")
+            print()
+            print(f"  Recommended fixes (pick one):")
+            print(f"    1. RUNOFF / SPEEDOFF — raw PID (no floor); output decays naturally near target")
+            print(f"    2. Firmware: lower MIN_PULSE_OFFSET from 100 to ~{max(fw_min, 10)}")
+            print(f"       (in the ESP8266 gantry firmware: #define MIN_PULSE_OFFSET {max(fw_min, 10)})")
+            print(f"    3. Increase SPEED to ≥{floor_speed:.1f} in/s if faster moves are acceptable")
+        else:
+            rec_msp = round(est_max, 1)
+            print(f"  MSP calibration   : current={msp:.1f}, recommended={rec_msp}")
+            if abs(rec_msp - msp) > 1.0:
+                print(f"    → try: MSP{rec_msp}")
+            else:
+                print(f"    → MSP looks reasonable; tune SKP if overshoot persists")
+        over  = [s for s in abs_spd if s > target_ips * 1.1]
+        under = [s for s in abs_spd if s < target_ips * 0.9 and s > 0.1]
+        print(f"  >10% over target  : {len(over)} / {len(abs_spd)} samples")
+        print(f"  >10% under target : {len(under)} / {len(abs_spd)} samples")
+    print("  ──────────────────────────────────────────────────")
+
+
+def _stream_log(g, stop_tags=('[GOTO] Arrived', '[GOTO] Aborted', '[ERR]'),
+                timeout=35.0, stall_tolerance_in=0.050, stall_count=15):
+    """
+    Stream firmware output until a stop tag is seen, Ctrl-C, or timeout.
+    Collects speed/ESC from CSV log lines (when LOG is active) and from
+    [STATUS] lines (always present) so open-loop FWD/REV runs are captured
+    even when LOG is toggled after the motor command.
+
+    Stall detection: if position hasn't changed by more than stall_tolerance_in
+    for stall_count consecutive samples AND speed is ~0, the gantry has settled
+    against static friction and we declare it arrived rather than looping forever.
+
+    Returns (speeds, esc_samples, arrived).
+    """
+    speeds = []
+    esc_samples = []
+    arrived = False
+    start = _time.monotonic()
+
+    # Stall detection state
+    _recent_pos = []   # last stall_count position readings
+    _stall_pos  = None
+    _stall_n    = 0
+
+    try:
+        while _time.monotonic() - start < timeout:
+            line = g.read_log_line()
+            if not line:
+                continue
+            # CSV log line: ms,pos_in,target_in,error_in,speed_in_s,esc_us
+            if ',' in line and not line.startswith('['):
+                parts = line.split(',')
+                if len(parts) >= 6:
+                    try:
+                        pos    = float(parts[1])
+                        tgt    = float(parts[2])
+                        spd    = float(parts[4])
+                        esc    = int(parts[5])
+                        speeds.append(spd)
+                        esc_samples.append((abs(spd), abs(esc - 1500)))
+
+                        # Stall detection: track whether position is stable
+                        if _stall_pos is None or abs(pos - _stall_pos) > stall_tolerance_in / 5:
+                            _stall_pos = pos
+                            _stall_n   = 1
+                        else:
+                            _stall_n += 1
+                            if _stall_n >= stall_count and abs(spd) < 0.15:
+                                err = abs(tgt - pos)
+                                print(f"  [STALL] Settled at {pos:.4f} in  "
+                                      f"(error: {err:.4f} in = {err * 2053.67:.0f} counts)")
+                                arrived = True
+                    except (ValueError, IndexError):
+                        pass
+                print(f"  {line}")
+                if arrived:
+                    break
+            else:
+                if line.startswith('['):
+                    print(f"  {line}")
+                # Parse [STATUS] lines as fallback speed source — always present
+                # even when CSV LOG is off (e.g. open-loop FWD/REV).
+                # Format: [STATUS] Pos: X in | Spd: Y in/s | ... | ESC: Zus
+                if '[STATUS]' in line:
+                    try:
+                        spd = float(line.split('Spd:')[1].split('in/s')[0].strip())
+                        esc = int(line.split('ESC:')[1].split('us')[0].strip())
+                        speeds.append(spd)
+                        esc_samples.append((abs(spd), abs(esc - 1500)))
+                    except (IndexError, ValueError):
+                        pass
+                for tag in stop_tags:
+                    if tag in line:
+                        arrived = True
+                        break
+                if arrived:
+                    break
+    except KeyboardInterrupt:
+        g.stop()
+        print("  Interrupted \u2014 motor stopped.")
+    return speeds, esc_samples, arrived
+
+
+# Current speed-control params tracked on the Python side (shadows firmware state)
+_state = {
+    'speed_ips':  TRAVEL_SPEED_IPS,
+    'speed_kp':   2.0,
+    'msp':        8.0,
+    'clamp':      400,
+    'speed_ctrl': True,
+    'kp': 0.15, 'ki': 0.0, 'kd': 0.10,
+}
+
+
+def _print_help():
+    print("------------------------------")
+    print("  RUN<in>           GOTO with live speed log        e.g. RUN6.5")
+    print("  RUNOFF<in>        RUN with raw PID (no floor jitter)  e.g. RUNOFF3.0")
+    print("  GOTO<in>          Go to position in inches        e.g. GOTO6.5")
+    print("  MM<mm>            Go to position in millimetres   e.g. MM165")
+    print("  SWEEP<mm>         Slow sauce-sweep move (mm)      e.g. SWEEP80")
+    print("  FWD<0-100>        Forward power                   e.g. FWD25")
+    print("  REV<0-100>        Reverse power                   e.g. REV25")
+    print("  SPEED<in/s>       Set target speed                e.g. SPEED3.0")
+    print("  SPEEDON           Enable speed control")
+    print("  SPEEDOFF          Disable speed control (raw PID)")
+    print("  SKP<val>          Set speed Kp                    e.g. SKP2.0")
+    print("  MSP<val>          Set max speed estimate          e.g. MSP8.0")
+    print("  CLAMP<val>        Set output clamp                e.g. CLAMP300")
+    print("  KP<val>           Set PID Kp                      e.g. KP0.15")
+    print("  KI<val>           Set PID Ki                      e.g. KI0.0")
+    print("  KD<val>           Set PID Kd                      e.g. KD0.10")
+    print("  LOG               Toggle live CSV data stream")
+    print("  TUNE              Show current speed-ctrl params")
+    print("  STOP / S          Stop motor immediately")
+    print("  ZERO              Run homing routine")
+    print("  POS  / P          Query position")
+    print("  DIAG / D          Full diagnostics")
+    print("  HELP / H          Show this list")
+    print("  Q                 Quit")
+    print("------------------------------")
+    print(f"  Max travel      : {MAX_TRAVEL_INCHES} in  ({MAX_TRAVEL_MM:.1f} mm)")
+    print(f"  Hard speed cap  : {MAX_SPEED_HARD_CAP} in/s")
+    print(f"  Travel speed    : {TRAVEL_SPEED_IPS} in/s")
+    print(f"  Sweep speed     : {SWEEP_SPEED_IPS} in/s")
+    print("------------------------------\n")
+
+
+def main():
+    print("\n==============================")
+    print("  Gantry Tester")
+    print("  HiLetGo NodeMCU ESP8266")
+    print("==============================")
+    print("Connecting to gantry controller...")
+    g = VESCGantry()
+    g.boot_check()
+    pos = g.get_position_mm()
+    print(f"Connected. Position (unzeroed): {pos:.1f} mm\n")
+    _print_help()
+
+    while True:
+        raw = input("cmd > ").strip()
+        cmd = raw.upper()
+
+        if cmd in ('Q', 'QUIT'):
+            print("Stopping motor and exiting.")
+            g.stop()
+            break
+
+        elif cmd in ('STOP', 'S'):
+            g.stop()
+            print("  Stopped.\n")
+
+        elif cmd in ('ZERO', 'HOME'):
+            print("  Homing... (may take up to 60 s)")
+            try:
+                g.home()
+                print(f"  Homing complete. Position: {g.get_position_mm():.1f} mm\n")
+            except (RuntimeError, TimeoutError) as e:
+                print(f"  ERROR: {e}\n")
+
+        elif cmd in ('POS', 'P'):
+            pos = g.get_position_mm()
+            pos_in = pos / 25.4
+            print(f"  Position: {pos:.3f} mm  ({pos_in:.4f} in)\n")
+
+        elif cmd in ('DIAG', 'D'):
+            print(g.diag() + "\n")
+
+        elif cmd in ('HELP', 'H'):
+            _print_help()
+
+        elif cmd == 'SPEEDON':
+            g.speed_on()
+            _state['speed_ctrl'] = True
+            print("  Speed control ON\n")
+
+        elif cmd == 'SPEEDOFF':
+            g.speed_off()
+            _state['speed_ctrl'] = False
+            print("  Speed control OFF (raw PID)\n")
+
+        elif cmd == 'TUNE':
+            print("  --- Speed-control params (Python-tracked) ---")
+            print(f"  speed_ctrl  : {'ON' if _state['speed_ctrl'] else 'OFF (raw PID)'}")
+            print(f"  target speed: {_state['speed_ips']:.2f} in/s")
+            print(f"  speed Kp    : {_state['speed_kp']}")
+            print(f"  max spd est : {_state['msp']}  (feedforward scale)")
+            print(f"  output clamp: {_state['clamp']}")
+            print(f"  PID Kp/Ki/Kd: {_state['kp']} / {_state['ki']} / {_state['kd']}")
+            print(f"  hard cap    : {MAX_SPEED_HARD_CAP} in/s")
+            print("  (Use DIAG to confirm firmware-side values)\n")
+
+        elif cmd == 'LOG':
+            g.toggle_log()
+            print("  LOG toggled — reading live (Ctrl-C to stop)...")
+            print("  ms, pos_in, target_in, error_in, speed_in_s, esc_us")
+            try:
+                while True:
+                    line = g.read_log_line()
+                    if line:
+                        print(" ", line)
+            except KeyboardInterrupt:
+                pass
+            g.toggle_log()   # turn it back off
+            print("  LOG off.\n")
+
+        elif cmd.startswith('RUNOFF'):
+            # Like RUN but with SPEEDOFF (raw PID) — avoids MIN_PULSE_OFFSET floor jitter.
+            # Raw PID output scales with position error so it naturally decelerates near target.
+            try:
+                inches = float(cmd[6:])
+                if not 0.0 <= inches <= MAX_TRAVEL_INCHES:
+                    print(f"  Out of range. Must be 0\u2013{MAX_TRAVEL_INCHES} in.\n")
+                    continue
+                print(f"  RUNOFF {inches:.4f} in  (raw PID, speed ctrl OFF)")
+                print("  ms, pos_in, target_in, error_in, speed_in_s, esc_us")
+                g._ser.reset_input_buffer()
+                g._send("SPEEDOFF")
+                _time.sleep(0.05)
+                g._ser.reset_input_buffer()
+                g._send("LOG")
+                _time.sleep(0.02)
+                g._send(f"GOTO{inches:.4f}")
+                speeds, esc_samples, arrived = _stream_log(g)
+                g._send("LOG")
+                g._send("STOP")   # ensure motor is idle if we exited via stall
+                if _state['speed_ctrl']:
+                    g._send("SPEEDON")   # restore if it was on
+                _analyse_speed(speeds, esc_samples, target_ips=_state['speed_ips'],
+                               clamp=_state['clamp'], msp=_state['msp'],
+                               speed_ctrl=False)
+                if not arrived:
+                    g._position_mm = -1
+                print()
+            except ValueError:
+                print("  Usage: RUNOFF<inches>  e.g. RUNOFF3.0\n")
+
+        elif cmd.startswith('RUN'):
+            # GOTO with live LOG streaming — lets you see speed vs position in real-time.
+            # Format: ms, pos_in, target_in, error_in, speed_in_s, esc_us
+            try:
+                inches = float(cmd[3:])
+                if not 0.0 <= inches <= MAX_TRAVEL_INCHES:
+                    print(f"  Out of range. Must be 0–{MAX_TRAVEL_INCHES} in.\n")
+                    continue
+                print(f"  RUN {inches:.4f} in at {_state['speed_ips']:.2f} in/s")
+                print("  ms, pos_in, target_in, error_in, speed_in_s, esc_us")
+                g._ser.reset_input_buffer()
+                g._send(f"SPEED{_state['speed_ips']:.2f}")
+                _time.sleep(0.05)
+                g._ser.reset_input_buffer()
+                g._send("LOG")
+                _time.sleep(0.02)
+                g._send(f"GOTO{inches:.4f}")
+                speeds, esc_samples, arrived = _stream_log(g)
+                g._send("LOG")
+                _analyse_speed(speeds, esc_samples, target_ips=_state['speed_ips'],
+                               clamp=_state['clamp'], msp=_state['msp'])
+                if not arrived:
+                    g._position_mm = -1
+                print()
+            except ValueError:
+                print("  Usage: RUN<inches>  e.g. RUN6.5\n")
+
+        elif cmd.startswith('GOTO'):
+            try:
+                inches = float(cmd[4:])
+                print(f"  GOTO {inches:.4f} in (blocking)...")
+                g.set_speed(_state['speed_ips'])
+                mm = int(round(inches * 25.4))
+                g._position_mm = -1   # force move_to to not skip
+                g.move_to(mm)
+                pos = g.get_position_mm()
+                print(f"  Arrived. Position: {pos:.3f} mm  ({pos/25.4:.4f} in)\n")
+            except ValueError:
+                print("  Usage: GOTO<inches>  e.g. GOTO6.5\n")
+            except (RuntimeError, TimeoutError, ValueError) as e:
+                print(f"  ERROR: {e}\n")
+
+        elif cmd.startswith('MM'):
+            try:
+                mm = float(cmd[2:])
+                if not 0.0 <= mm <= MAX_TRAVEL_MM:
+                    print(f"  Out of range. Must be 0–{MAX_TRAVEL_MM:.1f} mm.\n")
+                    continue
+                print(f"  Moving to {mm:.1f} mm...")
+                g._position_mm = -1   # force move_to to not skip
+                g.move_to(int(round(mm)))
+                pos = g.get_position_mm()
+                print(f"  Arrived. Position: {pos:.3f} mm  ({pos/25.4:.4f} in)\n")
+            except ValueError:
+                print("  Usage: MM<millimetres>  e.g. MM165\n")
+            except (RuntimeError, TimeoutError) as e:
+                print(f"  ERROR: {e}\n")
+
+        elif cmd.startswith('SWEEP'):
+            try:
+                mm = float(cmd[5:])
+                if not 0.0 <= mm <= MAX_TRAVEL_MM:
+                    print(f"  Out of range. Must be 0–{MAX_TRAVEL_MM:.1f} mm.\n")
+                    continue
+                print(f"  Sweep move to {mm:.1f} mm at {SWEEP_SPEED_IPS} in/s...")
+                g._position_mm = -1
+                g.move_to(int(round(mm)), max_duty=SWEEP_MAX_DUTY)
+                pos = g.get_position_mm()
+                print(f"  Arrived. Position: {pos:.3f} mm\n")
+            except ValueError:
+                print("  Usage: SWEEP<mm>  e.g. SWEEP80\n")
+            except (RuntimeError, TimeoutError) as e:
+                print(f"  ERROR: {e}\n")
+
+        elif cmd.startswith('FWD'):
+            try:
+                pct = int(cmd[3:]) if cmd[3:] else 25
+                print(f"  FWD {pct}% — streaming live data (Ctrl-C to stop motor)...")
+                print("  ms, pos_in, target_in, error_in, speed_in_s, esc_us")
+                # Send motor command FIRST. FWD sets logging=false in firmware,
+                # so LOG must be sent after to re-enable the CSV stream.
+                g._ser.reset_input_buffer()
+                g.fwd(pct)
+                _time.sleep(0.05)
+                g._ser.reset_input_buffer()
+                g._send("LOG")
+                speeds, esc_samples, _ = _stream_log(
+                    g, stop_tags=('[LIMIT]', '[ERR]'), timeout=60.0)
+                g._send("LOG")
+                g.stop()
+                _analyse_speed(speeds, esc_samples, target_ips=None,
+                               clamp=_state['clamp'], msp=_state['msp'])
+                print()
+            except ValueError:
+                print("  Usage: FWD<0-100>  e.g. FWD25\n")
+
+        elif cmd.startswith('REV'):
+            try:
+                pct = int(cmd[3:]) if cmd[3:] else 25
+                print(f"  REV {pct}% — streaming live data (Ctrl-C to stop motor)...")
+                print("  ms, pos_in, target_in, error_in, speed_in_s, esc_us")
+                # Send motor command FIRST. REV sets logging=false in firmware,
+                # so LOG must be sent after to re-enable the CSV stream.
+                g._ser.reset_input_buffer()
+                g.rev(pct)
+                _time.sleep(0.05)
+                g._ser.reset_input_buffer()
+                g._send("LOG")
+                speeds, esc_samples, _ = _stream_log(
+                    g, stop_tags=('[LIMIT]', '[ERR]'), timeout=60.0)
+                g._send("LOG")
+                g.stop()
+                _analyse_speed(speeds, esc_samples, target_ips=None,
+                               clamp=_state['clamp'], msp=_state['msp'])
+                print()
+            except ValueError:
+                print("  Usage: REV<0-100>  e.g. REV25\n")
+
+        elif cmd.startswith('SPEED'):
+            try:
+                ips = float(cmd[5:])
+                g.set_speed(ips)
+                _state['speed_ips'] = ips
+                print(f"  Target speed set to {ips:.2f} in/s\n")
+            except ValueError:
+                print(f"  Usage: SPEED<in/s>  e.g. SPEED3.0  (max {MAX_SPEED_HARD_CAP})\n")
+
+        elif cmd.startswith('SKP'):
+            try:
+                val = float(cmd[3:])
+                g.set_speed_kp(val)
+                _state['speed_kp'] = val
+                print(f"  Speed Kp = {val}\n")
+            except ValueError:
+                print("  Usage: SKP<val>  e.g. SKP2.0\n")
+
+        elif cmd.startswith('MSP'):
+            try:
+                val = float(cmd[3:])
+                g.set_max_speed_estimate(val)
+                _state['msp'] = val
+                print(f"  Max speed estimate = {val}")
+                print(f"  Tip: use RUN to check avg speed — lower MSP if under-speed, raise if over.\n")
+            except ValueError:
+                print("  Usage: MSP<val>  e.g. MSP8.0\n")
+
+        elif cmd.startswith('CLAMP'):
+            try:
+                val = int(cmd[5:])
+                g.set_clamp(val)
+                _state['clamp'] = val
+                print(f"  Output clamp = {val}\n")
+            except ValueError:
+                print("  Usage: CLAMP<val>  e.g. CLAMP300\n")
+
+        elif cmd.startswith('KP'):
+            try:
+                val = float(cmd[2:])
+                g.set_kp(val)
+                _state['kp'] = val
+                print(f"  Kp = {val}\n")
+            except ValueError:
+                print("  Usage: KP<val>  e.g. KP0.15\n")
+
+        elif cmd.startswith('KI'):
+            try:
+                val = float(cmd[2:])
+                g.set_ki(val)
+                _state['ki'] = val
+                print(f"  Ki = {val}\n")
+            except ValueError:
+                print("  Usage: KI<val>  e.g. KI0.0\n")
+
+        elif cmd.startswith('KD'):
+            try:
+                val = float(cmd[2:])
+                g.set_kd(val)
+                _state['kd'] = val
+                print(f"  Kd = {val}\n")
+            except ValueError:
+                print("  Usage: KD<val>  e.g. KD0.10\n")
+
+        elif raw == '':
+            pass
+
+        else:
+            print("  Unknown command. Type HELP.\n")
+
+
+if __name__ == "__main__":
+    main()

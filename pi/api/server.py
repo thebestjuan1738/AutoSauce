@@ -15,14 +15,24 @@ The UI (Chromium) talks to this on localhost:8080.
 This server talks to order_manager directly as a Python function call.
 """
 
+import os
+import subprocess
+import threading
+import time
+
+import serial
+import serial.serialutil
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from pi.ordering.order_manager import OrderManager, OrderStatus
-from pi.ordering.sauce_config import get_coverage_levels
+from pi.ordering.sauce_config import get_coverage_levels, POSITIONS
 from pi.utils.logger import log, get_recent_logs
+from pi.motion.arduino_controller import ArduinoController
+from pi.motion.gripper import GPIOGripper
+from pi.motion.extruder import GPIOExtruder
 
 # ─── App ──────────────────────────────────────────────────────────────────────
 
@@ -39,9 +49,57 @@ app.add_middleware(
 
 # Serve the UI static files at the root
 # So http://localhost:8080/ loads index.html automatically
-import os
 ui_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../ui'))
 app.mount("/ui", StaticFiles(directory=ui_dir, html=True), name="ui")
+
+# ─── Serial (Arduino) ───────────────────────────────────────────────────────
+
+import sys
+_SERIAL_PORT    = "COM4" if sys.platform == "win32" else "/dev/ttyACM0"
+_SERIAL_BAUD    = 9600
+_SERIAL_TIMEOUT = 2.0   # seconds to wait for Arduino response line
+_ARDUINO_RESET_DELAY = 2.0  # Arduino resets when serial opens; let it boot
+
+_serial_lock: threading.Lock = threading.Lock()
+_ser: serial.Serial | None = None
+
+
+@app.on_event("startup")
+def _open_serial() -> None:
+    # Gantry controlled by VESCGantry via USB serial — serial port owned by that driver. Skip.
+    pass
+
+
+def _send_serial_command(command: str) -> str:
+    """Send a newline-terminated command and return the Arduino's response line."""
+    if _ser is None or not _ser.is_open:
+        raise HTTPException(
+            status_code=503,
+            detail=f"Serial device {_SERIAL_PORT} not available",
+        )
+    with _serial_lock:
+        _ser.reset_input_buffer()
+        _ser.write(f"{command}\n".encode())
+        raw = _ser.readline()
+    response = raw.decode(errors="replace").strip()
+    if not response:
+        raise HTTPException(status_code=502, detail="No response from Arduino (timeout)")
+    return response
+
+
+@app.post("/sauce/start")
+def sauce_start():
+    """Send ON over serial → Arduino turns on LED_BUILTIN."""
+    response = _send_serial_command("ON")
+    return {"success": True, "command": "ON", "arduino_response": response}
+
+
+@app.post("/sauce/stop")
+def sauce_stop():
+    """Send OFF over serial → Arduino turns off LED_BUILTIN."""
+    response = _send_serial_command("OFF")
+    return {"success": True, "command": "OFF", "arduino_response": response}
+
 
 # ─── Dependency injection ─────────────────────────────────────────────────────
 # The order_manager is set once at startup by main.py
@@ -51,6 +109,15 @@ _order_manager: OrderManager | None = None
 def set_order_manager(om: OrderManager) -> None:
     global _order_manager
     _order_manager = om
+
+
+# ─── Gantry singleton ────────────────────────────────────────────────────────
+# Injected at startup by main.py so position state is preserved across requests.
+_gantry = None
+
+def set_gantry(gantry) -> None:
+    global _gantry
+    _gantry = gantry
 
 def get_order_manager() -> OrderManager:
     if _order_manager is None:
@@ -130,3 +197,189 @@ def get_logs():
 def health():
     """Simple health check — useful during development."""
     return {"status": "ok"}
+
+
+# ─── Debug endpoints ──────────────────────────────────────────────────────────
+
+
+@app.post("/api/debug/test-gripper")
+def debug_test_gripper():
+    """Full gripper cycle — close fully then open fully."""
+    try:
+        arduino = ArduinoController()
+        if not arduino.send_command("GRAB", timeout=15.0, done_marker="GRAB_DONE"):
+            raise RuntimeError("GRAB timed out")
+        if not arduino.send_command("RELEASE", timeout=15.0, done_marker="RELEASE_DONE"):
+            raise RuntimeError("RELEASE timed out")
+        log.info("Debug: gripper full cycle complete")
+        return {"success": True}
+    except Exception as e:
+        log.error(f"Debug gripper test failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/debug/test-extruder")
+def debug_test_extruder():
+    """Full extruder cycle — meet plunger then retract."""
+    try:
+        arduino = ArduinoController()
+        if not arduino.send_command("MEETPLUNGER", timeout=45.0, done_marker="PLUNGER_DONE"):
+            raise RuntimeError("MEETPLUNGER timed out")
+        if not arduino.send_command("OPENEXT", timeout=45.0, done_marker="OPENEXT_DONE"):
+            raise RuntimeError("OPENEXT timed out")
+        log.info("Debug: extruder full cycle complete")
+        return {"success": True}
+    except Exception as e:
+        log.error(f"Debug extruder test failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/debug/restart")
+def debug_restart():
+    """Restarts the sauce-backend systemd service."""
+    def _do_restart():
+        subprocess.run(["sudo", "systemctl", "restart", "sauce-backend"], check=False)
+    threading.Thread(target=_do_restart, daemon=True).start()
+    return {"success": True, "message": "Restarting..."}
+
+
+# ─── Manual control endpoints ─────────────────────────────────────────────────
+
+def _manual(command: str, timeout: float = 20.0):
+    """Send a single Arduino command and return success/failure."""
+    try:
+        arduino = ArduinoController()
+        if not arduino.send_command(command, timeout=timeout):
+            raise RuntimeError(f"{command} timed out")
+        log.info(f"Manual: {command} complete")
+        return {"success": True}
+    except Exception as e:
+        log.error(f"Manual {command} failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/manual/home-grabber")
+def manual_home_grabber():
+    """Home the gripper to open position."""
+    try:
+        arduino = ArduinoController()
+        if not arduino.send_command("HOMEGRAB", timeout=20.0, done_marker="HOMEGRAB_DONE"):
+            raise RuntimeError("HOMEGRAB timed out")
+        return {"success": True}
+    except Exception as e:
+        log.error(f"Manual home-grabber failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/manual/home-extruder")
+def manual_home_extruder():
+    """Home the extruder to retracted position."""
+    try:
+        arduino = ArduinoController()
+        if not arduino.send_command("HOMEEXT", timeout=20.0, done_marker="HOMEEXT_DONE"):
+            raise RuntimeError("HOMEEXT timed out")
+        return {"success": True}
+    except Exception as e:
+        log.error(f"Manual home-extruder failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/manual/close-grabber")
+def manual_close_grabber():
+    """Close the gripper (grab)."""
+    try:
+        arduino = ArduinoController()
+        if not arduino.send_command("GRAB", timeout=15.0, done_marker="GRAB_DONE"):
+            raise RuntimeError("GRAB timed out")
+        return {"success": True}
+    except Exception as e:
+        log.error(f"Manual close-grabber failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/manual/open-grabber")
+def manual_open_grabber():
+    """Open the gripper (release)."""
+    try:
+        arduino = ArduinoController()
+        if not arduino.send_command("RELEASE", timeout=15.0, done_marker="RELEASE_DONE"):
+            raise RuntimeError("RELEASE timed out")
+        return {"success": True}
+    except Exception as e:
+        log.error(f"Manual open-grabber failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/manual/open-extruder")
+def manual_open_extruder():
+    """Retract the extruder to home position."""
+    try:
+        arduino = ArduinoController()
+        if not arduino.send_command("OPENEXT", timeout=45.0, done_marker="OPENEXT_DONE"):
+            raise RuntimeError("OPENEXT timed out")
+        return {"success": True}
+    except Exception as e:
+        log.error(f"Manual open-extruder failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/manual/meet-plunger")
+def manual_meet_plunger():
+    """Drive extruder until plunger contact."""
+    try:
+        arduino = ArduinoController()
+        if not arduino.send_command("MEETPLUNGER", timeout=45.0, done_marker="PLUNGER_DONE"):
+            raise RuntimeError("MEETPLUNGER timed out")
+        return {"success": True}
+    except Exception as e:
+        log.error(f"Manual meet-plunger failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/manual/gantry-positions")
+def manual_gantry_positions():
+    """Returns available named gantry positions."""
+    return {"positions": list(POSITIONS.keys())}
+
+@app.get("/api/manual/gantry-position")
+def manual_gantry_position():
+    """Returns the current gantry position in mm."""
+    if _gantry is None:
+        return {"position_mm": None}
+    return {"position_mm": _gantry._position_mm}
+
+@app.post("/api/manual/move-gantry/{location}")
+def manual_move_gantry(location: str):
+    if location not in POSITIONS:
+        raise HTTPException(status_code=400, detail=f"Unknown location '{location}'. Valid: {list(POSITIONS.keys())}")
+    if _gantry is None:
+        raise HTTPException(status_code=503, detail="Gantry not initialised")
+    try:
+        _gantry.move_to(POSITIONS[location])
+        log.info(f"Manual: gantry moved to '{location}' ({POSITIONS[location]} mm)")
+        return {"success": True}
+    except Exception as e:
+        log.error(f"Manual move-gantry/{location} failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/manual/move-gantry-mm/{mm}")
+def manual_move_gantry_mm(mm: int):
+    """Moves the gantry to an arbitrary position in mm."""
+    if mm < 0:
+        raise HTTPException(status_code=400, detail="Position must be non-negative")
+    if _gantry is None:
+        raise HTTPException(status_code=503, detail="Gantry not initialised")
+    try:
+        _gantry.move_to(mm)
+        log.info(f"Manual: gantry moved to {mm} mm")
+        return {"success": True}
+    except Exception as e:
+        log.error(f"Manual move-gantry-mm/{mm} failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/manual/home-gantry")
+def manual_home_gantry():
+    """Run the gantry homing routine (ZERO)."""
+    if _gantry is None:
+        raise HTTPException(status_code=503, detail="Gantry not initialised")
+    try:
+        _gantry.home()
+        log.info("Manual: gantry homed")
+        return {"success": True}
+    except Exception as e:
+        log.error(f"Manual home-gantry failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))

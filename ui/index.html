@@ -5,7 +5,7 @@
     <!-- Prevent zooming on touch devices -->
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
     <title>Sauce Dispenser</title>
-    <link rel="stylesheet" href="style.css" />
+    <link rel="stylesheet" href="style.css?v=2" />
   </head>
   <body>
 
@@ -105,11 +105,57 @@
           <button class="log-action-btn" id="log-close-btn" aria-label="Close">&times;</button>
         </div>
       </div>
+      <div class="log-debug-bar">
+        <button class="log-debug-btn" id="debug-manual-btn">Manual Controls</button>
+        <button class="log-debug-btn log-debug-btn--danger" id="debug-restart-btn">Restart Backend</button>
+      </div>
       <ol class="log-list" id="log-list" reversed>
         <li class="log-empty">No log entries yet.</li>
       </ol>
     </div>
 
-    <script src="script.js"></script>
+    <!-- Manual controls popup -->
+    <div class="manual-modal" id="manual-modal" hidden>
+      <div class="manual-modal-card">
+        <div class="manual-modal-header">
+          <span>Manual Controls</span>
+          <button class="log-action-btn" id="manual-modal-close" aria-label="Close">&times;</button>
+        </div>
+        <div class="manual-modal-grid">
+          <button class="log-debug-btn" id="debug-home-grabber-btn">Home Grabber</button>
+          <button class="log-debug-btn" id="debug-home-extruder-btn">Home Extruder</button>
+          <button class="log-debug-btn" id="debug-close-grabber-btn">Close Grabber</button>
+          <button class="log-debug-btn" id="debug-open-grabber-btn">Open Grabber</button>
+          <button class="log-debug-btn" id="debug-open-extruder-btn">Open Extruder</button>
+          <button class="log-debug-btn" id="debug-meet-plunger-btn">Meet Plunger</button>
+          <button class="log-debug-btn" id="debug-home-gantry-btn">Zero Gantry</button>
+          <button class="log-debug-btn manual-modal-grid--full" id="debug-move-gantry-btn">Move Gantry</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Gantry location picker popup -->
+    <div class="manual-modal" id="gantry-modal" hidden>
+      <div class="manual-modal-card">
+        <div class="manual-modal-header">
+          <span>Move Gantry To</span>
+          <button class="log-action-btn" id="gantry-modal-close" aria-label="Close">&times;</button>
+        </div>
+        <p class="gantry-current-pos" id="gantry-current-pos">Current position: --</p>
+        <div class="manual-modal-grid" id="gantry-location-grid">
+          <!-- populated by JS from /api/manual/gantry-positions -->
+        </div>
+        <div class="gantry-custom-row">
+          <div class="gantry-slider-wrap">
+            <span class="gantry-slider-val" id="gantry-slider-val">0 mm</span>
+            <input type="range" id="gantry-custom-input" class="gantry-custom-input" min="0" max="400" step="1" value="0" />
+            <div class="gantry-slider-ticks"><span>0</span><span>100</span><span>200</span><span>300</span><span>400</span></div>
+          </div>
+          <button class="log-debug-btn" id="gantry-custom-btn">Move</button>
+        </div>
+      </div>
+    </div>
+
+    <script src="script.js?v=2"></script>
   </body>
 </html>
