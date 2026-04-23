@@ -49,9 +49,13 @@ from pi.ordering.sauce_config import get_profile, POSITIONS
 # Tune this to compensate for extruder coast/lag.
 EXTRUDER_EARLY_STOP_S = 0.4
 
-# Firmware sauce sweep distance: SAUCE_END_INCHES (6.3) - SAUCE_START_INCHES (1.65).
+# Firmware sauce sweep distance: SAUCE_END_INCHES (6.3) - SAUCE_START_INCHES (1.90).
 # Used to estimate sweep duration for the early extruder stop timer.
-SAUCE_SWEEP_INCHES = 4.65
+SAUCE_SWEEP_INCHES = 4.40
+
+# Firmware pauses this long after sending DISPENSING before starting the gantry sweep,
+# giving the extruder time to prime. Must match the delay(1000) in GantryCode.ino.
+SAUCE_DISPENSE_PREDELAY_S = 1.0
 from pi.utils.logger import log
 
 
@@ -249,7 +253,7 @@ class OrderManager:
         self._conveyor.start_zigzag()
 
         sweep_duration_s = SAUCE_SWEEP_INCHES / sweep_speed_ips
-        early_stop_delay_s = max(0.0, sweep_duration_s - EXTRUDER_EARLY_STOP_S)
+        early_stop_delay_s = max(0.0, SAUCE_DISPENSE_PREDELAY_S + sweep_duration_s - EXTRUDER_EARLY_STOP_S)
         stop_timer = [None]
 
         def on_dispense_start():
