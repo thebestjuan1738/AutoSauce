@@ -1,8 +1,10 @@
 """
 test_fwd20.py — Minimal motor response test. No auto-home, no boot_check.
 
-Connects directly to the ESP8266, waits for STATUS, sends FWD20, reads
-STATUS for 5 seconds watching for position/speed changes, then stops.
+Connects directly to the ESP8266, waits for STATUS at neutral (ESC armed),
+then sends FWD50 WITHOUT sending STOP first. The STOP call in boot_check
+triggers esc.writeMicroseconds(1500) which may glitch the PWM long enough
+to de-arm the ESC. This version avoids that entirely.
 
 Run on Pi:  python3 test_fwd20.py
 """
@@ -11,10 +13,11 @@ import serial
 import serial.tools.list_ports
 import time
 
-BAUD         = 115200
-WAIT_S       = 20    # max wait for first STATUS line (covers full ESC arming)
-RUN_S        = 5     # how long to run FWD20
-FWD_POWER    = 20
+BAUD          = 115200
+WAIT_S        = 25    # max wait for STATUS at neutral (covers full boot + ESC arming)
+HOLD_NEUTRAL  = 5     # seconds to observe neutral before commanding — ensures ESC is armed
+RUN_S         = 5     # how long to run FWD
+FWD_POWER     = 50    # use 50% — more headroom above any ESC dead band
 FALLBACK_PORT = "/dev/ttyGANTRY"
 
 GANTRY_VID = 0x10C4
@@ -41,12 +44,12 @@ def readline(ser):
 
 def main():
     port = find_port()
-    print(f"Opening {port} @ {BAUD} baud (no DTR manipulation)...")
+    print(f"Opening {port} @ {BAUD} baud...")
     ser = serial.Serial(port, BAUD, timeout=0.5)
-    print("Port open.\n")
+    print("Port open. NOT sending STOP — letting ESC stay armed.\n")
 
-    # ── Wait for firmware to be alive ─────────────────────────────────────────
-    print(f"Waiting up to {WAIT_S}s for [STATUS] line (covers DTR-reset + ESC arming)...")
+    # ── Wait for STATUS at neutral (ESC should be armed from setup()) ─────────
+    print(f"Waiting up to {WAIT_S}s for [STATUS] with ESC: 1500us (neutral = armed)...")
     deadline = time.monotonic() + WAIT_S
     ready = False
     while time.monotonic() < deadline:
@@ -54,34 +57,29 @@ def main():
         if not line:
             continue
         print(f"  < {line}")
-        if "[STATUS]" in line or "[POS]" in line:
+        if "[STATUS]" in line and "ESC: 1500us" in line:
             ready = True
             break
+        elif "[STATUS]" in line:
+            # Print but keep waiting for neutral confirmation
+            pass
 
     if not ready:
-        print("[WARN] No STATUS seen — continuing anyway (firmware may be mid-boot)\n")
+        print("[WARN] Did not see ESC: 1500us in STATUS — ESC may not be at neutral\n")
     else:
-        print("[OK] Firmware alive.\n")
+        print(f"[OK] ESC confirmed at neutral (1500us).\n")
 
-    # ── Send STOP to clear any leftover motion ────────────────────────────────
-    ser.reset_input_buffer()
-    send(ser, "STOP")
-    time.sleep(0.2)
-
-    # ── Baseline POS ──────────────────────────────────────────────────────────
-    ser.reset_input_buffer()
-    send(ser, "POS")
-    deadline = time.monotonic() + 2.0
-    while time.monotonic() < deadline:
+    # ── Hold and observe for HOLD_NEUTRAL seconds before commanding ───────────
+    print(f"Observing {HOLD_NEUTRAL}s more at neutral (ensures ESC fully armed)...")
+    start = time.monotonic()
+    while time.monotonic() - start < HOLD_NEUTRAL:
         line = readline(ser)
         if line:
             print(f"  < {line}")
-            if "[POS]" in line:
-                break
 
-    # ── FWD run ───────────────────────────────────────────────────────────────
+    # ── NO STOP sent — go straight to FWD ────────────────────────────────────
     print(f"\nSending FWD{FWD_POWER} — reading STATUS for {RUN_S}s:")
-    print("  (watch for Pos or ActSpd to change — any change = motor moving)\n")
+    print("  (watch Pos or ActSpd for any change)\n")
     ser.reset_input_buffer()
     send(ser, f"FWD{FWD_POWER}")
 
@@ -102,7 +100,7 @@ def main():
             except (IndexError, ValueError):
                 pass
 
-    # ── Stop ──────────────────────────────────────────────────────────────────
+    # ── Stop ─────────────────────────────────────────────────────────────────
     send(ser, "STOP")
     time.sleep(0.2)
     ser.close()
@@ -117,9 +115,9 @@ def main():
         print(f"  Position range : {min(positions):.4f} → {max(positions):.4f} in  (Δ {pos_range:.4f} in)")
         print(f"  Peak speed     : {max_spd:.4f} in/s")
         if pos_range > 0.01 or max_spd > 0.05:
-            print("  MOTOR MOVING  ✓ — encoder sees motion from Pi")
+            print("  MOTOR MOVING  ✓")
         else:
-            print("  MOTOR NOT MOVING ✗ — position/speed stuck despite ESC commanded")
+            print("  MOTOR NOT MOVING ✗ — position/speed stuck")
     else:
         print("  No STATUS lines parsed — check port / firmware")
     print("=" * 50)
