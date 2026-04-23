@@ -192,15 +192,14 @@ class VESCGantry:
     def __init__(self):
         port = _find_gantry_port()
         log.info("VESCGantry: connecting to %s @ %d baud", port, GANTRY_BAUD)
-        # Open without touching DTR/RTS. On Linux the default is DTR asserted (HIGH),
-        # which does NOT trigger the NodeMCU reset circuit (reset fires on LOW, not HIGH).
-        # The original explicit setDTR(False)/setDTR(True) sequence was forcing the
-        # ESP8266 to re-run setup(), which left D1 floating during the ~2s boot ROM
-        # phase. The goBILDA ESC sees that garbage and fails to arm. Leaving the port
-        # alone keeps the firmware and ESC running from initial power-on.
         self._ser = serial.Serial(port, GANTRY_BAUD, timeout=0.5)
         self._position_mm = 0
-        log.info("VESCGantry: connected (DTR untouched — ESC stays armed)")
+        log.info("VESCGantry: connected")
+        # DTR pulse resets the ESP8266 so setup() always runs fresh and re-arms the ESC.
+        log.info("VESCGantry: resetting ESP8266 via DTR pulse...")
+        self._ser.setDTR(False)
+        time.sleep(0.1)
+        self._ser.setDTR(True)
         self._ser.reset_input_buffer()
 
     # ── Internal helpers ──────────────────────────────────────────────────────
@@ -239,8 +238,8 @@ class VESCGantry:
         log.info("VESCGantry: waiting for firmware boot...")
         self._ser.reset_input_buffer()
 
-        # Quick check: already running? (no DTR reset — firmware stays live,
-        # STATUS lines arrive immediately within 2 s).
+        # Quick check: already running? If the DTR reset didn't trigger a reboot
+        # (e.g. Windows driver behaviour), STATUS lines arrive within 2 s.
         quick_deadline = time.monotonic() + 2.0
         while time.monotonic() < quick_deadline:
             line = self._readline()
