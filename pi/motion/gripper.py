@@ -22,8 +22,7 @@ class GPIOGripper:
 
     def __init__(self):
         self.arduino = ArduinoController()
-        log.info("GPIOGripper: Initializing via Arduino USB...")
-        self.home()
+        log.info("GPIOGripper: initialized (Arduino already homed at boot)")
 
     def cleanup(self) -> None:
         """Cleanup logic (handled on Arduino)."""

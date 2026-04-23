@@ -27,8 +27,7 @@ class GPIOExtruder:
     def __init__(self):
         self.arduino = ArduinoController()
         self._plunger_met: bool = False
-        log.info("GPIOExtruder: Initializing via Arduino USB...")
-        self.home()
+        log.info("GPIOExtruder: initialized (Arduino already homed at boot)")
 
     @property
     def is_plunger_met(self) -> bool:
