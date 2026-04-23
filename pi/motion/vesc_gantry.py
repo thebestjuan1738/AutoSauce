@@ -192,14 +192,14 @@ class VESCGantry:
     def __init__(self):
         port = _find_gantry_port()
         log.info("VESCGantry: connecting to %s @ %d baud", port, GANTRY_BAUD)
-        self._ser = serial.Serial(port, GANTRY_BAUD, timeout=0.5)
+        # dsrdtr=True keeps DTR asserted (high) at all times — never pulses it.
+        # Pulsing DTR resets the ESP8266, which forces a re-run of setup() including
+        # ESC arming. During the ~2s boot ROM phase before setup() runs, pin D1 floats
+        # and the goBILDA ESC sees garbage, preventing it from arming reliably.
+        # Leaving DTR stable lets the firmware and ESC stay armed from power-on.
+        self._ser = serial.Serial(port, GANTRY_BAUD, timeout=0.5, dsrdtr=True)
         self._position_mm = 0
-        log.info("VESCGantry: connected")
-        # DTR pulse resets the ESP8266 so setup() always runs fresh and re-arms the ESC.
-        log.info("VESCGantry: resetting ESP8266 via DTR pulse...")
-        self._ser.setDTR(False)
-        time.sleep(0.1)
-        self._ser.setDTR(True)
+        log.info("VESCGantry: connected (no DTR reset — ESC stays armed)")
         self._ser.reset_input_buffer()
 
     # ── Internal helpers ──────────────────────────────────────────────────────
@@ -238,8 +238,8 @@ class VESCGantry:
         log.info("VESCGantry: waiting for firmware boot...")
         self._ser.reset_input_buffer()
 
-        # Quick check: already running? (firmware was live before DTR reset or
-        # boot_check called without a reset — STATUS arrives within 2 s).
+        # Quick check: already running? (no DTR reset — firmware stays live,
+        # STATUS lines arrive immediately within 2 s).
         quick_deadline = time.monotonic() + 2.0
         while time.monotonic() < quick_deadline:
             line = self._readline()
@@ -268,6 +268,10 @@ class VESCGantry:
                 elif self._is_status_line(line):
                     log.info("VESCGantry: STATUS detected during banner — firmware running")
                     break
+
+        # Send STOP to clear any motion left over from a previous session.
+        self._send("STOP")
+        time.sleep(0.1)
 
         # Verify two-way comms with POS.  Retry up to 3 times (9 s total) because
         # STATUS lines flooding the buffer can delay or garble the first POS response.
