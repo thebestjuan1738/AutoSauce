@@ -192,14 +192,15 @@ class VESCGantry:
     def __init__(self):
         port = _find_gantry_port()
         log.info("VESCGantry: connecting to %s @ %d baud", port, GANTRY_BAUD)
-        # dsrdtr=True keeps DTR asserted (high) at all times — never pulses it.
-        # Pulsing DTR resets the ESP8266, which forces a re-run of setup() including
-        # ESC arming. During the ~2s boot ROM phase before setup() runs, pin D1 floats
-        # and the goBILDA ESC sees garbage, preventing it from arming reliably.
-        # Leaving DTR stable lets the firmware and ESC stay armed from power-on.
-        self._ser = serial.Serial(port, GANTRY_BAUD, timeout=0.5, dsrdtr=True)
+        # Open without touching DTR/RTS. On Linux the default is DTR asserted (HIGH),
+        # which does NOT trigger the NodeMCU reset circuit (reset fires on LOW, not HIGH).
+        # The original explicit setDTR(False)/setDTR(True) sequence was forcing the
+        # ESP8266 to re-run setup(), which left D1 floating during the ~2s boot ROM
+        # phase. The goBILDA ESC sees that garbage and fails to arm. Leaving the port
+        # alone keeps the firmware and ESC running from initial power-on.
+        self._ser = serial.Serial(port, GANTRY_BAUD, timeout=0.5)
         self._position_mm = 0
-        log.info("VESCGantry: connected (no DTR reset — ESC stays armed)")
+        log.info("VESCGantry: connected (DTR untouched — ESC stays armed)")
         self._ser.reset_input_buffer()
 
     # ── Internal helpers ──────────────────────────────────────────────────────
