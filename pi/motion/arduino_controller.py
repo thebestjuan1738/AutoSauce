@@ -45,8 +45,10 @@ class ArduinoController:
         Priority: fixed udev symlink → exact VID match → description keyword → everything else.
         """
         import os
-        # Prefer the fixed udev symlink — stable across re-enumerations.
-        if os.path.exists(ArduinoController._FIXED_PORT):
+        # Prefer the fixed udev symlink on Linux — stable across re-enumerations.
+        # On Windows, os.path.exists("COMx") is True for any present port (even if
+        # locked by another process), so skip the shortcut and always do VID/PID scan.
+        if sys.platform != "win32" and os.path.exists(ArduinoController._FIXED_PORT):
             return [ArduinoController._FIXED_PORT]
 
         arduino_keywords = ('arduino', 'ch340', 'ch341', 'ftdi', 'usb serial')

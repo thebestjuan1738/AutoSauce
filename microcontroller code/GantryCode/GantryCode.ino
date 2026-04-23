@@ -1,7 +1,8 @@
 #include <Servo.h>
 
+
 // ---- Pin Definitions ----
-#define ESC_PIN     5    // D1
+#define ESC_PIN       4   // D2
 #define ENC_A       14   // D5
 #define ENC_B       12   // D6
 #define LIMIT_MIN   13   // D7
@@ -22,8 +23,8 @@ long  maxTravelCounts = (long)(MAX_TRAVEL_INCHES_DEFAULT * COUNTS_PER_INCH);
 #define DOCK_POSITION_INCHES 14.0
 
 // ---- Sauce positions ----
-#define SAUCE_START_INCHES  6.3
-#define SAUCE_END_INCHES    1.65
+#define SAUCE_START_INCHES  1.65
+#define SAUCE_END_INCHES    6.3
 float sauceSpeed = 1.0;
 
 // ---- Cascaded PID ----
@@ -33,10 +34,11 @@ float pos_Kd = 0.0;
 float pos_integral  = 0;
 float pos_lastError = 0;
 
-float spd_Kp = 3.0;
-float spd_Ki = 2.0;
-float spd_Kd = 0.0;
+float spd_Kp = 8.0;
+float spd_Ki = 0.3;
+float spd_Kd = 8.0;
 float spd_integral  = 0;
+float spdIntegLimit = 500.0;
 float spd_lastError = 0;
 
 #define POS_LOOP_MS   20
@@ -47,14 +49,14 @@ unsigned long lastSpdLoop = 0;
 // ---- Speed limits ----
 float maxMoveSpeed           = 999;
 float desiredSpeedSetpoint   = 0.0;
-#define MIN_PULSE_OFFSET     30
+#define MIN_PULSE_OFFSET     130
 #define POS_DEADBAND         50
 
 // ---- Homing ----
-#define HOME_PHASE1_POWER    5
-#define HOME_FWD_POWER       5
-#define HOME_FWD_TIME_MS     2000
-#define HOME_REV_POWER       5
+#define HOME_PHASE1_POWER    30
+#define HOME_FWD_POWER       15
+#define HOME_FWD_TIME_MS     500
+#define HOME_REV_POWER       30
 #define HOME_ZERO_TOLERANCE  0.05
 
 // ---- Move context — what triggered the current move ----
@@ -63,7 +65,10 @@ float desiredSpeedSetpoint   = 0.0;
 #define MOVE_CONTEXT_DOCK   2
 #define MOVE_CONTEXT_SAUCE1 3   // phase 1 — moving to start position
 #define MOVE_CONTEXT_SAUCE2 4   // phase 2 — dispensing move
+#define MOVE_CONTEXT_TEST1  5   // test leg 1: → 2 in
+#define MOVE_CONTEXT_TEST2  6   // test leg 2: → 10 in
 int currentMoveContext = MOVE_CONTEXT_NONE;
+float dbg_spdError = 0;
 
 // ---- Sauce state ----
 bool sauceActive     = false;
@@ -79,7 +84,9 @@ unsigned long lastSpeedTime    = 0;
 long lastSpeedCount            = 0;
 
 // ---- State ----
-int   currentPulse   = ESC_STOP;
+int   currentPulse    = ESC_STOP;
+int   currentFwdPulse = ESC_STOP;   // bang-bang: pulse for forward direction
+int   currentRevPulse = ESC_STOP;   // bang-bang: pulse for reverse direction
 bool  limitTriggered = false;
 bool  forwardBlocked = false;
 bool  movingToTarget = false;
@@ -153,7 +160,7 @@ void setup() {
   Serial.println("");
 
   // ---- Test 4: ESC arming ----
-  Serial.println("[TEST 4] ESC arming (D1)");
+  Serial.println("[TEST 4] ESC arming (D2)");
   esc.attach(ESC_PIN, ESC_MIN, ESC_MAX);
   esc.writeMicroseconds(ESC_STOP);
   Serial.println("  Waiting 3 seconds...");
@@ -332,6 +339,23 @@ void loop() {
             currentMoveContext = MOVE_CONTEXT_NONE;
             break;
 
+          case MOVE_CONTEXT_TEST1:
+            Serial.print("[TEST] Leg 1 done. Pos: ");
+            Serial.print(encoderCount / COUNTS_PER_INCH, 3);
+            Serial.println(" in → moving to 10 in");
+            startMove(10.0, 5.0, MOVE_CONTEXT_TEST2);
+            logging = true;
+            moveStartTime = millis();
+            break;
+
+          case MOVE_CONTEXT_TEST2:
+            Serial.print("[TEST] Leg 2 done. Pos: ");
+            Serial.print(encoderCount / COUNTS_PER_INCH, 3);
+            Serial.println(" in");
+            Serial.println("TEST COMPLETE");
+            logging = false;
+            break;
+
           case MOVE_CONTEXT_DOCK:
             Serial.println("DOCK COMPLETE");
             Serial.print("[DOCK] Arrived at ");
@@ -372,51 +396,54 @@ void loop() {
 
         } else {
 
+          // ---- BANG-BANG CONTROLLER ----
+          // Pulse is fixed per direction; set in startMove() based on speed.
+          /*
           // ---- OUTER LOOP: Position → Speed setpoint ----
           if (now - lastPosLoop >= POS_LOOP_MS) {
             lastPosLoop = now;
-
             float posErrorInches = posError / COUNTS_PER_INCH;
             pos_integral += posErrorInches;
             pos_integral = constrain(pos_integral, -10.0, 10.0);
             float pos_derivative = posErrorInches - pos_lastError;
             pos_lastError = posErrorInches;
-
             float rawSpeedSetpoint = pos_Kp * posErrorInches
                                    + pos_Ki * pos_integral
                                    + pos_Kd * pos_derivative;
-
             desiredSpeedSetpoint = constrain(rawSpeedSetpoint, -maxMoveSpeed, maxMoveSpeed);
           }
-
           // ---- INNER LOOP: Speed → ESC pulse ----
           if (now - lastSpdLoop >= SPD_LOOP_MS) {
             lastSpdLoop = now;
-
             float spdError = desiredSpeedSetpoint - currentSpeedInchesPerSec;
+            dbg_spdError = spdError;
             spd_integral += spdError;
-            spd_integral = constrain(spd_integral, -200.0, 200.0);
+            spd_integral = constrain(spd_integral, -spdIntegLimit, spdIntegLimit);
             float spd_derivative = spdError - spd_lastError;
             spd_lastError = spdError;
-
             float spdOutput = spd_Kp * spdError
                             + spd_Ki * spd_integral
                             + spd_Kd * spd_derivative;
-
-
             if (abs(spdOutput) < MIN_PULSE_OFFSET
                 && abs(posError) > POS_DEADBAND
                 && abs(currentSpeedInchesPerSec) < 0.3) {
               spdOutput = (desiredSpeedSetpoint > 0) ? MIN_PULSE_OFFSET : -MIN_PULSE_OFFSET;
             }
-
             if (abs(desiredSpeedSetpoint) < 0.05 && abs(posError) <= POS_DEADBAND * 2) {
               spdOutput = 0;
             }
-
             currentPulse = ESC_STOP + (int)spdOutput;
             currentPulse = constrain(currentPulse, ESC_MIN, ESC_MAX);
             esc.writeMicroseconds(currentPulse);
+          }
+          */
+
+          if (posError > 0) {
+            esc.writeMicroseconds(currentFwdPulse);
+            currentPulse = currentFwdPulse;
+          } else {
+            esc.writeMicroseconds(currentRevPulse);
+            currentPulse = currentRevPulse;
           }
         }
       }
@@ -439,7 +466,13 @@ void loop() {
     Serial.print(",");
     Serial.print(desiredSpeedSetpoint, 4);
     Serial.print(",");
-    Serial.println(currentPulse);
+    Serial.print(dbg_spdError, 4);
+    Serial.print(",");
+    Serial.print(currentPulse);
+    Serial.print(",");
+    Serial.print(pos_integral, 4);
+    Serial.print(",");
+    Serial.println(spd_integral, 4);
 
   } else {
     if (now - lastPrint >= statusInterval) {
@@ -592,6 +625,11 @@ void loop() {
       spd_Kd = cmd.substring(3).toFloat();
       Serial.print("[SPD PID] Kd = "); Serial.println(spd_Kd, 4);
 
+    } else if (cmd.startsWith("SILIM")) {
+      spdIntegLimit = max(cmd.substring(5).toFloat(), 1.0f);
+      spd_integral = constrain(spd_integral, -spdIntegLimit, spdIntegLimit);
+      Serial.print("[SPD PID] Integral limit = "); Serial.println(spdIntegLimit, 1);
+
     } else if (cmd.startsWith("SINT")) {
       statusInterval = cmd.substring(4).toInt();
       statusInterval = constrain(statusInterval, 50, 5000);
@@ -602,9 +640,27 @@ void loop() {
       moveStartTime = millis();
       if (logging) {
         Serial.println("[LOG] Logging ON");
-        Serial.println("ms,pos_in,target_in,error_in,act_spd,spd_sp,esc_us");
+        Serial.println("ms,pos_in,target_in,pos_err_in,act_spd,spd_sp,spd_err,esc_us,pos_integ,spd_integ");
       } else {
         Serial.println("[LOG] Logging OFF");
+      }
+
+    } else if (cmd == "TEST") {
+      if (movingToTarget) {
+        Serial.println("[ERR] Gantry already moving. STOP first.");
+      } else {
+        Serial.println("[TEST] PID tuning run: 2 in → 10 in at 5 in/s");
+        Serial.print("[TEST] PKp="); Serial.print(pos_Kp, 4);
+        Serial.print(" PKi="); Serial.print(pos_Ki, 4);
+        Serial.print(" PKd="); Serial.println(pos_Kd, 4);
+        Serial.print("[TEST] SKp="); Serial.print(spd_Kp, 4);
+        Serial.print(" SKi="); Serial.print(spd_Ki, 4);
+        Serial.print(" SKd="); Serial.println(spd_Kd, 4);
+        Serial.println("[TEST] MIN_PULSE_OFFSET=" + String(MIN_PULSE_OFFSET));
+        Serial.println("ms,pos_in,target_in,pos_err_in,act_spd,spd_sp,spd_err,esc_us,pos_integ,spd_integ");
+        logging = true;
+        moveStartTime = millis();
+        startMove(2.0, 5.0, MOVE_CONTEXT_TEST1);
       }
 
     } else if (cmd.startsWith("FWD")) {
@@ -738,6 +794,17 @@ void startMove(float inches, float speed, int context) {
   moveStartTime      = millis();
   currentMoveContext = context;
   resetPID();
+  // Bang-bang pulse selection: FWD10=1ips, FWD15=3ips, FWD20=5ips, REV30=3ips
+  if (speed <= 1.5) {
+    currentFwdPulse = 1550;  // FWD10 ~1 in/s
+    currentRevPulse = 1350;  // REV30 ~3 in/s
+  } else if (speed <= 4.0) {
+    currentFwdPulse = 1575;  // FWD15 ~3 in/s
+    currentRevPulse = 1350;  // REV30 ~3 in/s
+  } else {
+    currentFwdPulse = 1600;  // FWD20 ~5 in/s
+    currentRevPulse = 1350;  // REV30 ~3 in/s
+  }
 }
 
 // =============================================================
@@ -777,7 +844,7 @@ void runHomingRoutine() {
   homingActive = true;
   Serial.println("[ZERO] ---- Homing routine started ----");
 
-  Serial.println("[ZERO] Phase 1: Reversing to home switch at REV5...");
+  Serial.println("[ZERO] Phase 1: Reversing to home switch...");
   int revPulse = map(HOME_PHASE1_POWER, 0, 100, 1500, 1000);
   esc.writeMicroseconds(revPulse);
   currentPulse = revPulse;
@@ -808,7 +875,7 @@ void runHomingRoutine() {
     attempt++;
     Serial.print("[ZERO] Attempt "); Serial.println(attempt);
 
-    Serial.println("[ZERO]   FWD5 for 2 seconds...");
+    Serial.println("[ZERO]   FWD for 0.5 seconds...");
     int fwdPulse = map(HOME_FWD_POWER, 0, 100, 1500, 2000);
     esc.writeMicroseconds(fwdPulse);
     currentPulse   = fwdPulse;
@@ -821,7 +888,7 @@ void runHomingRoutine() {
     Serial.print(encoderCount / COUNTS_PER_INCH, 3);
     Serial.println(" in");
 
-    Serial.println("[ZERO]   Creeping reverse at REV5...");
+    Serial.println("[ZERO]   Creeping reverse...");
     revPulse = map(HOME_REV_POWER, 0, 100, 1500, 1000);
     esc.writeMicroseconds(revPulse);
     currentPulse = revPulse;
@@ -846,25 +913,11 @@ void runHomingRoutine() {
       delay(300);
 
     } else {
-      float posInches = encoderCount / COUNTS_PER_INCH;
-      Serial.print("[ZERO]   Limit triggered at: ");
-      Serial.print(posInches, 4);
-      Serial.println(" in");
-
-      if (abs(posInches) <= HOME_ZERO_TOLERANCE) {
-        encoderCount   = 0;
-        limitTriggered = true;
-        exactZeroFound = true;
-        digitalWrite(LED_BUILTIN, LOW);
-        Serial.println("[ZERO]   Exact zero confirmed!");
-      } else {
-        encoderCount   = 0;
-        limitTriggered = true;
-        Serial.print("[ZERO]   Drifted (");
-        Serial.print(posInches, 4);
-        Serial.println(" in) - retrying...");
-        delay(300);
-      }
+      encoderCount   = 0;
+      limitTriggered = true;
+      exactZeroFound = true;
+      digitalWrite(LED_BUILTIN, LOW);
+      Serial.println("[ZERO]   Zero confirmed.");
     }
 
     if (attempt > 10) {

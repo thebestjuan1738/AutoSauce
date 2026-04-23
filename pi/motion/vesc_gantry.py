@@ -216,8 +216,8 @@ class VESCGantry:
         time.sleep(2.0)
         port = _find_gantry_port()
         self._ser = serial.Serial(port, GANTRY_BAUD, timeout=0.5)
-        self._ser.reset_input_buffer()
         log.info("VESCGantry: reconnected on %s", port)
+        self._wait_for_boot()
 
     def _send(self, cmd: str) -> None:
         """Write a newline-terminated command to the firmware."""
@@ -703,6 +703,54 @@ class VESCGantry:
 
         self._position_mm = position_mm
         log.info("VESCGantry: arrived at %d mm", position_mm)
+
+    def sauce(self, speed_ips: float, on_dispense_start=None, timeout: float = 120.0) -> None:
+        """
+        Run the firmware SAUCE sequence at speed_ips inches/sec.
+
+        The firmware handles two phases:
+          Phase 1 — gantry reverses to sauce start position (1.65 in) at maxMoveSpeed.
+          Phase 2 — gantry sweeps forward to sauce end (6.3 in) at speed_ips.
+
+        on_dispense_start: optional callable invoked when the firmware sends DISPENSING
+        (start of phase 2 sweep). Use to start the extruder and any other concurrent ops.
+
+        Blocks until SAUCE COMPLETE is received. Raises TimeoutError on timeout or
+        RuntimeError on firmware error.
+        """
+        log.info("VESCGantry: SAUCE%.2f in/s", speed_ips)
+        with self._lock:
+            try:
+                self._ser.reset_input_buffer()
+            except (serial.SerialException, OSError) as e:
+                log.error("VESCGantry: reset error (%s) — reconnecting", e)
+                self._reconnect()
+            self._send(f"SAUCE{speed_ips:.2f}")
+
+            dispense_started = False
+
+            def _sauce_match(line):
+                nonlocal dispense_started
+                if line == "DISPENSING" and not dispense_started:
+                    dispense_started = True
+                    log.info("VESCGantry: DISPENSING received — phase 2 sweep started")
+                    if on_dispense_start:
+                        on_dispense_start()
+                    return False  # keep waiting for SAUCE COMPLETE
+                if line == "SAUCE COMPLETE":
+                    return True
+                if "[ERR]" in line:
+                    raise RuntimeError(f"VESCGantry SAUCE error: {line}")
+                return False
+
+            try:
+                self._wait_for(_sauce_match, timeout)
+            except TimeoutError:
+                self._send("STOP")
+                raise TimeoutError(
+                    f"VESCGantry SAUCE timed out after {timeout}s at {speed_ips:.2f} in/s"
+                )
+        log.info("VESCGantry: SAUCE complete")
 
     # ── Backward-compat aliases ───────────────────────────────────────────────
 
