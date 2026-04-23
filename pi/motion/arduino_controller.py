@@ -115,6 +115,30 @@ class ArduinoController:
             f"ArduinoController: timed out waiting for READY from {port_name}"
         )
 
+    def _reconnect(self) -> None:
+        """Reopen the serial port after an EIO / USB re-enumeration."""
+        log.warning("ArduinoController: serial error — reconnecting...")
+        try:
+            if self.port and self.port.is_open:
+                self.port.close()
+        except Exception:
+            pass
+        time.sleep(2.0)
+        candidates = self._candidate_ports()
+        for port_name in candidates:
+            try:
+                log.info("ArduinoController: reconnecting to %s", port_name)
+                self.port = serial.Serial(port_name, 115200, timeout=1)
+                self._wait_for_ready(port_name)
+                log.info("ArduinoController: reconnected on %s", port_name)
+                return
+            except Exception as e:
+                log.error("ArduinoController: reconnect failed on %s: %s", port_name, e)
+                if self.port and self.port.is_open:
+                    self.port.close()
+                self.port = None
+        log.error("ArduinoController: could not reconnect to Arduino on any port")
+
     def send_command(self, cmd: str, timeout: float = 15.0, done_marker: str = None) -> bool:
         """
         Send a command to the Arduino and wait for completion.
@@ -133,37 +157,53 @@ class ArduinoController:
             return False
 
         with self.serial_lock:
-            self.port.reset_input_buffer()
+            try:
+                self.port.reset_input_buffer()
+            except (serial.SerialException, OSError) as e:
+                log.error("ArduinoController: reset_input_buffer error (%s) — reconnecting", e)
+                self._reconnect()
             full_cmd = f"{cmd}\n"
-            self.port.write(full_cmd.encode('utf-8'))
-            self.port.flush()
-            log.info(f"Sent to Arduino: {cmd}")
+            try:
+                self.port.write(full_cmd.encode('utf-8'))
+                self.port.flush()
+                log.info(f"Sent to Arduino: {cmd}")
+            except (serial.SerialException, OSError) as e:
+                log.error("ArduinoController: send error (%s) — reconnecting", e)
+                self._reconnect()
+                self.port.write(full_cmd.encode('utf-8'))
+                self.port.flush()
+                log.info(f"Sent to Arduino: {cmd} (after reconnect)")
 
             start_time = time.time()
             while time.time() - start_time < timeout:
-                if self.port.in_waiting > 0:
-                    response = self.port.readline().decode('utf-8').strip()
-                    if not response:
-                        continue
+                try:
+                    if self.port.in_waiting > 0:
+                        response = self.port.readline().decode('utf-8').strip()
+                        if not response:
+                            time.sleep(0.01)
+                            continue
 
-                    # Check for specific done marker
-                    if done_marker and response == done_marker:
-                        log.info(f"Arduino completed: {cmd} -> {response}")
-                        return True
-
-                    # Check for generic completion patterns
-                    if done_marker is None:
-                        if response.endswith("_DONE") or response == "READY" or response == "STOPPED":
+                        # Check for specific done marker
+                        if done_marker and response == done_marker:
                             log.info(f"Arduino completed: {cmd} -> {response}")
                             return True
 
-                    # Check for error responses
-                    if response == "ERROR" or response.startswith("[ERR]"):
-                        log.error(f"Arduino error for {cmd}: {response}")
-                        return False
+                        # Check for generic completion patterns
+                        if done_marker is None:
+                            if response.endswith("_DONE") or response == "READY" or response == "STOPPED":
+                                log.info(f"Arduino completed: {cmd} -> {response}")
+                                return True
 
-                    # Log intermediate messages
-                    log.info(f"Arduino: {response}")
+                        # Check for error responses
+                        if response == "ERROR" or response.startswith("[ERR]"):
+                            log.error(f"Arduino error for {cmd}: {response}")
+                            return False
+
+                        # Log intermediate messages
+                        log.info(f"Arduino: {response}")
+                except (serial.SerialException, OSError) as e:
+                    log.error("ArduinoController: read error (%s) — reconnecting", e)
+                    self._reconnect()
                 time.sleep(0.01)
 
             log.error(f"Arduino command {cmd} timed out after {timeout}s")
@@ -183,9 +223,16 @@ class ArduinoController:
 
         with self.serial_lock:
             full_cmd = f"{cmd}\n"
-            self.port.write(full_cmd.encode('utf-8'))
-            self.port.flush()
-            log.info(f"Sent to Arduino (async): {cmd}")
+            try:
+                self.port.write(full_cmd.encode('utf-8'))
+                self.port.flush()
+                log.info(f"Sent to Arduino (async): {cmd}")
+            except (serial.SerialException, OSError) as e:
+                log.error("ArduinoController: send error (%s) — reconnecting", e)
+                self._reconnect()
+                self.port.write(full_cmd.encode('utf-8'))
+                self.port.flush()
+                log.info(f"Sent to Arduino (async): {cmd} (after reconnect)")
             return True
 
     def wait_for_response(self, marker: str, timeout: float = 15.0) -> bool:
@@ -205,15 +252,20 @@ class ArduinoController:
         with self.serial_lock:
             start_time = time.time()
             while time.time() - start_time < timeout:
-                if self.port.in_waiting > 0:
-                    response = self.port.readline().decode('utf-8').strip()
-                    if not response:
-                        continue
-                    log.info(f"Arduino: {response}")
-                    if response == marker:
-                        return True
-                    if response == "ERROR" or response.startswith("[ERR]"):
-                        log.error(f"Arduino error: {response}")
-                        return False
+                try:
+                    if self.port.in_waiting > 0:
+                        response = self.port.readline().decode('utf-8').strip()
+                        if not response:
+                            time.sleep(0.01)
+                            continue
+                        log.info(f"Arduino: {response}")
+                        if response == marker:
+                            return True
+                        if response == "ERROR" or response.startswith("[ERR]"):
+                            log.error(f"Arduino error: {response}")
+                            return False
+                except (serial.SerialException, OSError) as e:
+                    log.error("ArduinoController: read error (%s) — reconnecting", e)
+                    self._reconnect()
                 time.sleep(0.01)
             return False

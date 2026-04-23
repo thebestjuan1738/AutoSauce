@@ -19,6 +19,7 @@ response. Falls back to GANTRY_PORT if auto-detection fails.
 
 import sys
 import time
+import threading
 import serial
 import serial.tools.list_ports
 
@@ -194,6 +195,7 @@ class VESCGantry:
         log.info("VESCGantry: connecting to %s @ %d baud", port, GANTRY_BAUD)
         self._ser = serial.Serial(port, GANTRY_BAUD, timeout=0.5)
         self._position_mm = 0
+        self._lock = threading.Lock()
         log.info("VESCGantry: connected")
         # DTR pulse resets the ESP8266 so setup() always runs fresh and re-arms the ESC.
         log.info("VESCGantry: resetting ESP8266 via DTR pulse...")
@@ -204,18 +206,63 @@ class VESCGantry:
 
     # ── Internal helpers ──────────────────────────────────────────────────────
 
+    def _reconnect(self) -> None:
+        """Reopen the serial port after an EIO / USB re-enumeration."""
+        log.warning("VESCGantry: serial error — reconnecting...")
+        try:
+            self._ser.close()
+        except Exception:
+            pass
+        time.sleep(2.0)
+        port = _find_gantry_port()
+        self._ser = serial.Serial(port, GANTRY_BAUD, timeout=0.5)
+        self._ser.reset_input_buffer()
+        log.info("VESCGantry: reconnected on %s", port)
+
     def _send(self, cmd: str) -> None:
         """Write a newline-terminated command to the firmware."""
-        self._ser.write(f"{cmd}\n".encode('utf-8'))
-        self._ser.flush()
-        log.debug("VESCGantry → %s", cmd)
+        try:
+            self._ser.write(f"{cmd}\n".encode('utf-8'))
+            self._ser.flush()
+            log.debug("VESCGantry → %s", cmd)
+        except (serial.SerialException, OSError) as e:
+            log.error("VESCGantry: send error (%s) — reconnecting", e)
+            self._reconnect()
+            self._ser.write(f"{cmd}\n".encode('utf-8'))
+            self._ser.flush()
+            log.debug("VESCGantry → %s (after reconnect)", cmd)
 
     def _readline(self) -> str:
-        """Read one line from the firmware. Returns '' on timeout (0.5 s per call)."""
+        """Read one line from the firmware (non-blocking). Returns '' if no data."""
         try:
-            return self._ser.readline().decode('utf-8', errors='ignore').strip()
+            if self._ser.in_waiting:
+                return self._ser.readline().decode('utf-8', errors='ignore').strip()
+            return ''
         except Exception:
             return ''
+
+    def _wait_for(self, match_fn, timeout: float) -> str:
+        """
+        Wait for a firmware line matched by match_fn(line) -> bool.
+        Returns the matching line. Raises TimeoutError on timeout.
+        match_fn may raise RuntimeError to abort early.
+        """
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            try:
+                if self._ser.in_waiting:
+                    line = self._ser.readline().decode('utf-8', errors='ignore').strip()
+                    if not line:
+                        time.sleep(0.01)
+                        continue
+                    log.debug("VESCGantry: %s", line)
+                    if match_fn(line):
+                        return line
+            except (serial.SerialException, OSError) as e:
+                log.error("VESCGantry: read error (%s) — reconnecting", e)
+                self._reconnect()
+            time.sleep(0.01)
+        raise TimeoutError(f"VESCGantry: timed out after {timeout}s")
 
     # ── Boot ──────────────────────────────────────────────────────────────────
 
@@ -244,6 +291,7 @@ class VESCGantry:
         while time.monotonic() < quick_deadline:
             line = self._readline()
             if not line:
+                time.sleep(0.01)
                 continue
             log.debug("VESCGantry boot: %s", line)
             if self._is_status_line(line):
@@ -258,6 +306,7 @@ class VESCGantry:
             while time.monotonic() < deadline:
                 line = self._readline()
                 if not line:
+                    time.sleep(0.01)
                     continue
                 log.debug("VESCGantry boot: %s", line)
                 if 'Counts/inch' in line:
@@ -276,24 +325,35 @@ class VESCGantry:
         # Verify two-way comms with POS.  Retry up to 3 times (9 s total) because
         # STATUS lines flooding the buffer can delay or garble the first POS response.
         for attempt in range(1, 4):
-            self._ser.reset_input_buffer()
+            try:
+                self._ser.reset_input_buffer()
+            except (serial.SerialException, OSError) as e:
+                log.error("VESCGantry: reset error (%s) — reconnecting", e)
+                self._reconnect()
             self._send("POS")
-            deadline = time.monotonic() + 3.0
-            while time.monotonic() < deadline:
-                line = self._readline()
+            result_line = [None]
+
+            def _pos_match(line):
                 if '[POS]' in line:
-                    log.info("VESCGantry: boot check passed — %s", line)
-                    # Auto-home the gantry after successful boot check
-                    log.info("VESCGantry: auto-homing on startup...")
-                    try:
-                        self.home()
-                    except RuntimeError as e:
-                        log.warning("VESCGantry: auto-home failed (%s) — continuing without homing", e)
-                        log.warning("VESCGantry: gantry position may be unknown until manually homed")
-                    return
+                    result_line[0] = line
+                    return True
                 if '[ERR]' in line:
                     raise RuntimeError(f"VESCGantry boot check error: {line}")
-            log.warning("VESCGantry: POS attempt %d/3 timed out — retrying", attempt)
+                return False
+
+            try:
+                self._wait_for(_pos_match, 3.0)
+                log.info("VESCGantry: boot check passed — %s", result_line[0])
+                # Auto-home the gantry after successful boot check
+                log.info("VESCGantry: auto-homing on startup...")
+                try:
+                    self.home()
+                except RuntimeError as e:
+                    log.warning("VESCGantry: auto-home failed (%s) — continuing without homing", e)
+                    log.warning("VESCGantry: gantry position may be unknown until manually homed")
+                return
+            except TimeoutError:
+                log.warning("VESCGantry: POS attempt %d/3 timed out — retrying", attempt)
 
         raise RuntimeError("VESCGantry: did not respond to POS command during boot check")
 
@@ -324,36 +384,58 @@ class VESCGantry:
         Query firmware for current encoder position and return it in mm.
         Parses: [POS] X.XXX in (counts) | Speed: ...
         """
-        self._ser.reset_input_buffer()
-        self._send("POS")
-        deadline = time.monotonic() + 2.0
-        while time.monotonic() < deadline:
-            line = self._readline()
-            if '[POS]' in line:
-                try:
-                    pos_in = float(line.split()[1])
-                    return pos_in * 25.4
-                except (IndexError, ValueError):
-                    pass
-        log.warning("VESCGantry: could not read position, returning cached value")
-        return float(self._position_mm)
+        with self._lock:
+            try:
+                self._ser.reset_input_buffer()
+            except (serial.SerialException, OSError) as e:
+                log.error("VESCGantry: reset error (%s) — reconnecting", e)
+                self._reconnect()
+            self._send("POS")
+            result = [None]
+
+            def _pos_match(line):
+                if '[POS]' in line:
+                    try:
+                        result[0] = float(line.split()[1]) * 25.4
+                        return True
+                    except (IndexError, ValueError):
+                        pass
+                return False
+
+            try:
+                self._wait_for(_pos_match, 2.0)
+            except TimeoutError:
+                log.warning("VESCGantry: could not read position, returning cached value")
+                return float(self._position_mm)
+        return result[0]
 
     def diag(self) -> str:
         """
         Send DIAG command. Collects and returns the full diagnostics block.
         Mirrors the DIAG / D command in the firmware.
         """
-        self._ser.reset_input_buffer()
-        self._send("DIAG")
-        lines = []
-        deadline = time.monotonic() + 3.0
-        while time.monotonic() < deadline:
-            line = self._readline()
-            if not line:
-                continue
-            lines.append(line)
-            if line.startswith('---') and len(lines) > 2:
-                break
+        with self._lock:
+            try:
+                self._ser.reset_input_buffer()
+            except (serial.SerialException, OSError):
+                self._reconnect()
+            self._send("DIAG")
+            lines = []
+            deadline = time.monotonic() + 3.0
+            while time.monotonic() < deadline:
+                try:
+                    if self._ser.in_waiting:
+                        line = self._ser.readline().decode('utf-8', errors='ignore').strip()
+                        if not line:
+                            time.sleep(0.01)
+                            continue
+                        lines.append(line)
+                        if line.startswith('---') and len(lines) > 2:
+                            break
+                except (serial.SerialException, OSError) as e:
+                    log.error("VESCGantry: read error (%s) — reconnecting", e)
+                    self._reconnect()
+                time.sleep(0.01)
         result = '\n'.join(lines)
         log.debug("VESCGantry DIAG:\n%s", result)
         return result
@@ -363,17 +445,28 @@ class VESCGantry:
         Send HELP command. Collects and returns the help text block.
         Mirrors the HELP / H command in the firmware.
         """
-        self._ser.reset_input_buffer()
-        self._send("HELP")
-        lines = []
-        deadline = time.monotonic() + 3.0
-        while time.monotonic() < deadline:
-            line = self._readline()
-            if not line:
-                continue
-            lines.append(line)
-            if line.startswith('---') and len(lines) > 2:
-                break
+        with self._lock:
+            try:
+                self._ser.reset_input_buffer()
+            except (serial.SerialException, OSError):
+                self._reconnect()
+            self._send("HELP")
+            lines = []
+            deadline = time.monotonic() + 3.0
+            while time.monotonic() < deadline:
+                try:
+                    if self._ser.in_waiting:
+                        line = self._ser.readline().decode('utf-8', errors='ignore').strip()
+                        if not line:
+                            time.sleep(0.01)
+                            continue
+                        lines.append(line)
+                        if line.startswith('---') and len(lines) > 2:
+                            break
+                except (serial.SerialException, OSError) as e:
+                    log.error("VESCGantry: read error (%s) — reconnecting", e)
+                    self._reconnect()
+                time.sleep(0.01)
         return '\n'.join(lines)
 
     # ── Motion ────────────────────────────────────────────────────────────────
@@ -388,7 +481,8 @@ class VESCGantry:
             raise ValueError(
                 f"GOTO out of range: {inches:.4f} in (valid 0.0–{MAX_TRAVEL_INCHES})"
             )
-        self._send(f"GOTO{inches:.4f}")
+        with self._lock:
+            self._send(f"GOTO{inches:.4f}")
         log.info("VESCGantry: GOTO%.4f in", inches)
 
     def fwd(self, power: int) -> None:
@@ -397,7 +491,8 @@ class VESCGantry:
         Mirrors FWD command. Firmware applies the hard speed cap internally.
         """
         power = max(0, min(100, power))
-        self._send(f"FWD{power}")
+        with self._lock:
+            self._send(f"FWD{power}")
         log.info("VESCGantry: FWD%d", power)
 
     def rev(self, power: int) -> None:
@@ -406,7 +501,8 @@ class VESCGantry:
         Mirrors REV command. Firmware applies the hard speed cap internally.
         """
         power = max(0, min(100, power))
-        self._send(f"REV{power}")
+        with self._lock:
+            self._send(f"REV{power}")
         log.info("VESCGantry: REV%d", power)
 
     def stop(self) -> None:
@@ -414,7 +510,8 @@ class VESCGantry:
         Send STOP — halts motor immediately, clears movingToTarget and
         homingActive flags in firmware. Mirrors STOP / S command.
         """
-        self._send("STOP")
+        with self._lock:
+            self._send("STOP")
         log.info("VESCGantry: STOP")
 
     def home(self) -> None:
@@ -425,21 +522,24 @@ class VESCGantry:
         timeout (60 s). Mirrors ZERO command.
         """
         log.info("VESCGantry: starting homing routine (ZERO)...")
-        self._ser.reset_input_buffer()
-        self._send("ZERO")
-        deadline = time.monotonic() + 60.0
-        while time.monotonic() < deadline:
-            line = self._readline()
-            if not line:
-                continue
-            log.debug("VESCGantry homing: %s", line)
-            if "HOMING COMPLETE" in line or "[ZERO] Ready." in line:
-                self._position_mm = 0
-                log.info("VESCGantry: homing complete, position = 0 mm")
-                return
-            if "[ZERO]" in line and "ERROR" in line:
-                raise RuntimeError(f"VESCGantry homing failed: {line}")
-        raise RuntimeError("VESCGantry: homing timed out after 60 s")
+        with self._lock:
+            try:
+                self._ser.reset_input_buffer()
+            except (serial.SerialException, OSError) as e:
+                log.error("VESCGantry: reset error (%s) — reconnecting", e)
+                self._reconnect()
+            self._send("ZERO")
+
+            def _home_match(line):
+                if "HOMING COMPLETE" in line or "[ZERO] Ready." in line:
+                    return True
+                if "[ZERO]" in line and "ERROR" in line:
+                    raise RuntimeError(f"VESCGantry homing failed: {line}")
+                return False
+
+            self._wait_for(_home_match, 60.0)
+        self._position_mm = 0
+        log.info("VESCGantry: homing complete, position = 0 mm")
 
     # ── Speed control ─────────────────────────────────────────────────────────
 
@@ -452,7 +552,8 @@ class VESCGantry:
             raise ValueError(
                 f"Speed out of range: {ips} in/s (valid 0.1–{MAX_SPEED_HARD_CAP})"
             )
-        self._send(f"MSPD{ips:.2f}")
+        with self._lock:
+            self._send(f"MSPD{ips:.2f}")
         log.info("VESCGantry: MSPD%.2f in/s", ips)
 
     def speed_on(self) -> None:
@@ -460,7 +561,8 @@ class VESCGantry:
         Enable feedforward speed control and clear the integral.
         Mirrors SPEEDON command.
         """
-        self._send("SPEEDON")
+        with self._lock:
+            self._send("SPEEDON")
         log.info("VESCGantry: SPEEDON")
 
     def speed_off(self) -> None:
@@ -468,7 +570,8 @@ class VESCGantry:
         Disable speed control — use raw PID instead. Clears integral.
         Mirrors SPEEDOFF command.
         """
-        self._send("SPEEDOFF")
+        with self._lock:
+            self._send("SPEEDOFF")
         log.info("VESCGantry: SPEEDOFF")
 
     def set_speed_kp(self, kp: float) -> None:
@@ -476,7 +579,8 @@ class VESCGantry:
         Set the speed feedback proportional gain.
         Mirrors SKP<val> command.
         """
-        self._send(f"SKP{kp}")
+        with self._lock:
+            self._send(f"SKP{kp}")
         log.info("VESCGantry: SKP%s", kp)
 
     def set_max_speed_estimate(self, msp: float) -> None:
@@ -484,7 +588,8 @@ class VESCGantry:
         Set the maximum speed estimate for feedforward scaling.
         Mirrors MSP<val> command.
         """
-        self._send(f"MSP{msp}")
+        with self._lock:
+            self._send(f"MSP{msp}")
         log.info("VESCGantry: MSP%s", msp)
 
     def set_clamp(self, clamp: int) -> None:
@@ -492,24 +597,28 @@ class VESCGantry:
         Set the PID/speed output clamp. Firmware constrains to 50–500.
         Mirrors CLAMP<val> command.
         """
-        self._send(f"CLAMP{clamp}")
+        with self._lock:
+            self._send(f"CLAMP{clamp}")
         log.info("VESCGantry: CLAMP%d", clamp)
 
     # ── PID tuning ────────────────────────────────────────────────────────────
 
     def set_kp(self, kp: float) -> None:
         """Set raw PID proportional gain. Mirrors KP<val> command."""
-        self._send(f"KP{kp}")
+        with self._lock:
+            self._send(f"KP{kp}")
         log.info("VESCGantry: KP%s", kp)
 
     def set_ki(self, ki: float) -> None:
         """Set raw PID integral gain. Mirrors KI<val> command."""
-        self._send(f"KI{ki}")
+        with self._lock:
+            self._send(f"KI{ki}")
         log.info("VESCGantry: KI%s", ki)
 
     def set_kd(self, kd: float) -> None:
         """Set raw PID derivative gain. Mirrors KD<val> command."""
-        self._send(f"KD{kd}")
+        with self._lock:
+            self._send(f"KD{kd}")
         log.info("VESCGantry: KD%s", kd)
 
     # ── Logging ───────────────────────────────────────────────────────────────
@@ -520,7 +629,8 @@ class VESCGantry:
         When ON the firmware streams: ms,pos_in,target_in,error_in,speed_in_s,esc_us
         Mirrors LOG command.
         """
-        self._send("LOG")
+        with self._lock:
+            self._send("LOG")
         log.info("VESCGantry: LOG toggled")
 
     def read_log_line(self) -> str:
@@ -554,31 +664,40 @@ class VESCGantry:
             position_mm, position_in, speed_ips,
         )
 
-        self._ser.reset_input_buffer()
-        # Set max move speed then flush ACK before issuing GOTO
-        self._send(f"MSPD{speed_ips:.2f}")
-        time.sleep(0.05)
-        self._ser.reset_input_buffer()
-        self._send(f"GOTO{position_in:.4f}")
+        with self._lock:
+            try:
+                self._ser.reset_input_buffer()
+            except (serial.SerialException, OSError) as e:
+                log.error("VESCGantry: reset error (%s) — reconnecting", e)
+                self._reconnect()
+            # Set max move speed then flush ACK before issuing GOTO
+            self._send(f"MSPD{speed_ips:.2f}")
+            time.sleep(0.05)
+            try:
+                self._ser.reset_input_buffer()
+            except (serial.SerialException, OSError) as e:
+                log.error("VESCGantry: reset error (%s) — reconnecting", e)
+                self._reconnect()
+            self._send(f"GOTO{position_in:.4f}")
 
-        deadline = time.monotonic() + TRAVEL_TIMEOUT_S
-        while time.monotonic() < deadline:
-            line = self._readline()
-            if not line:
-                continue
-            log.debug("VESCGantry move: %s", line)
-            if "[GOTO] Arrived at" in line:
-                self._position_mm = position_mm
-                log.info("VESCGantry: arrived at %d mm", position_mm)
-                return
-            if "[GOTO] Aborted" in line:
-                raise RuntimeError(f"VESCGantry move aborted: {line}")
-            if "[ERR]" in line:
-                raise RuntimeError(f"VESCGantry move error: {line}")
+            def _goto_match(line):
+                if "[GOTO] Arrived at" in line:
+                    return True
+                if "[GOTO] Aborted" in line:
+                    raise RuntimeError(f"VESCGantry move aborted: {line}")
+                if "[ERR]" in line:
+                    raise RuntimeError(f"VESCGantry move error: {line}")
+                return False
 
-        raise TimeoutError(
-            f"VESCGantry timed out after {TRAVEL_TIMEOUT_S}s moving to {position_mm}mm"
-        )
+            try:
+                self._wait_for(_goto_match, TRAVEL_TIMEOUT_S)
+            except TimeoutError:
+                raise TimeoutError(
+                    f"VESCGantry timed out after {TRAVEL_TIMEOUT_S}s moving to {position_mm}mm"
+                )
+
+        self._position_mm = position_mm
+        log.info("VESCGantry: arrived at %d mm", position_mm)
 
     # ── Backward-compat aliases ───────────────────────────────────────────────
 
