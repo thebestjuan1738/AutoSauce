@@ -540,6 +540,7 @@ class VESCGantry:
             try:
                 self._wait_for(_home_match, 70.0)
             except TimeoutError:
+                self._send("STOP")
                 raise RuntimeError("VESCGantry: homing timed out after 70 s")
         self._position_mm = 0
         log.info("VESCGantry: homing complete, position = 0 mm")
@@ -695,6 +696,7 @@ class VESCGantry:
             try:
                 self._wait_for(_goto_match, TRAVEL_TIMEOUT_S)
             except TimeoutError:
+                self._send("STOP")
                 raise TimeoutError(
                     f"VESCGantry timed out after {TRAVEL_TIMEOUT_S}s moving to {position_mm}mm"
                 )
