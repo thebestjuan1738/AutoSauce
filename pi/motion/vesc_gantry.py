@@ -537,7 +537,10 @@ class VESCGantry:
                     raise RuntimeError(f"VESCGantry homing failed: {line}")
                 return False
 
-            self._wait_for(_home_match, 60.0)
+            try:
+                self._wait_for(_home_match, 70.0)
+            except TimeoutError:
+                raise RuntimeError("VESCGantry: homing timed out after 70 s")
         self._position_mm = 0
         log.info("VESCGantry: homing complete, position = 0 mm")
 
