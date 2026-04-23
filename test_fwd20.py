@@ -17,7 +17,7 @@ BAUD          = 115200
 WAIT_S        = 25    # max wait for STATUS at neutral (covers full boot + ESC arming)
 HOLD_NEUTRAL  = 5     # seconds to observe neutral before commanding — ensures ESC is armed
 RUN_S         = 5     # how long to run FWD
-FWD_POWER     = 50    # use 50% — more headroom above any ESC dead band
+FWD_POWER     = 10    # 10% forward
 FALLBACK_PORT = "/dev/ttyGANTRY"
 
 GANTRY_VID = 0x10C4
