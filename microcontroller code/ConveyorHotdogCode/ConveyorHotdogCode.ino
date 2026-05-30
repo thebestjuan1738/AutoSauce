@@ -1,8 +1,6 @@
-#include <SPI.h>
 #include <Servo.h>
 
 // ---- Pin Definitions ----
-const int CS_PIN      = 10;
 const int CW_RELAY    = 6;
 const int CCW_RELAY   = 7;
 const int CONV_ENC_A  = 2;
@@ -15,11 +13,11 @@ const int LIMIT_SW    = 9;
 // ---- Station Positions (mm from home) ----
 const long POS_HOTDOG = 255;
 const long POS_HEAT   = 425;
-const long POS_SAUCE  = 739;
+const long POS_SAUCE  = 720;
 const long POS_PICKUP = 1020;
 
 // ---- Zigzag Configuration ----
-const int ZIGZAG_DIST_MM = 25;
+const int ZIGZAG_DIST_MM = 15;
 
 // ---- Conveyor ----
 volatile long absEncoder  = 0;
@@ -57,8 +55,9 @@ const float GRAB_DEG    = 274.0;
 const float DROP_DEG    = 197.0;
 
 Servo spark;
-float cylTarget  = 0;
-bool cylRunning  = false;
+float cylTarget   = 0;
+bool cylRunning   = false;
+bool cylPidReset  = false;
 
 volatile unsigned long riseTime   = 0;
 volatile unsigned long pulseWidth = 0;
@@ -82,18 +81,8 @@ void cylEncoderISR() {
   }
 }
 
-// ---- Digipot ----
-void setWiper(byte val) {
-  digitalWrite(CS_PIN, LOW);
-  SPI.transfer(0x11);
-  SPI.transfer(val);
-  digitalWrite(CS_PIN, HIGH);
-}
-
 // ---- Conveyor ----
 void convStop() {
-  setWiper(0);
-  delay(10);
   digitalWrite(CW_RELAY, HIGH);
   digitalWrite(CCW_RELAY, HIGH);
   convMoving    = false;
@@ -104,7 +93,6 @@ void convStartMove(long targetAbs, int dir) {
   convTargetAbs = targetAbs;
   convMoving    = true;
   convDirection = dir;
-  setWiper(255);
 
   if (dir == 1) {
     digitalWrite(CCW_RELAY, HIGH);
@@ -236,7 +224,7 @@ float readCylPosition(bool filterEnabled) {
   interrupts();
   if (pw == 0) return -1;
   float pos = constrain(map(pw, 1, 1024, 0, 3600) / 10.0, 0, 360);
-  if (filterEnabled && lastValid >= 0 && abs(angleDiff(pos, lastValid)) > 40) {
+  if (filterEnabled && lastValid >= 0 && abs(angleDiff(pos, lastValid)) > 15) {
     return lastValid;
   }
   lastValid = pos;
@@ -257,6 +245,13 @@ void runCylinder() {
   static float integral         = 0;
   static float lastError        = 0;
   static unsigned long lastTime = 0;
+
+  if (cylPidReset) {
+    integral      = 0;
+    lastError     = 0;
+    lastTime      = millis();
+    cylPidReset   = false;
+  }
 
   float currentPos = readCylPosition(true);
   if (currentPos < 0) {
@@ -419,12 +414,14 @@ void handleCommand() {
   } else if (strcmp(cmdBuf, "GRAB") == 0) {
     cylTarget      = GRAB_DEG;
     cylRunning     = true;
+    cylPidReset    = true;
     currentCylMove = CYL_GRAB;
     Serial.println(F("[CYL] GRAB"));
 
   } else if (strcmp(cmdBuf, "DROP") == 0) {
     cylTarget      = DROP_DEG;
     cylRunning     = true;
+    cylPidReset    = true;
     currentCylMove = CYL_DROP;
     Serial.println(F("[CYL] DROP"));
 
@@ -488,7 +485,6 @@ void setup() {
   pinMode(CW_RELAY, OUTPUT);   digitalWrite(CW_RELAY, HIGH);
   pinMode(CCW_RELAY, OUTPUT);  digitalWrite(CCW_RELAY, HIGH);
   pinMode(LAMP_RELAY, OUTPUT); digitalWrite(LAMP_RELAY, LOW);
-  pinMode(CS_PIN, OUTPUT);     digitalWrite(CS_PIN, HIGH);
   pinMode(LIMIT_SW, INPUT_PULLUP);
   pinMode(CONV_ENC_A, INPUT);
   pinMode(CONV_ENC_B, INPUT);
@@ -498,8 +494,6 @@ void setup() {
 
   spark.attach(SPARK_PIN, 500, 2500);
   stopCylMotor();
-  SPI.begin();
-  setWiper(0);
   Serial.begin(9600);
   delay(500);
 

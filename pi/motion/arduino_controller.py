@@ -16,7 +16,8 @@ class ArduinoController:
                 cls._instance._init_serial()
             return cls._instance
 
-    _BOOT_TIMEOUT = 15.0   # seconds to wait for READY banner (ESC arming takes ~6 s)
+    _BOOT_TIMEOUT = 40.0   # seconds to wait for READY banner — must cover full homing sequence
+                           # (Arduino boot ~3s + grabber ~2s + extruder up to 15s hard cap)
 
     # Known Arduino/clone USB VIDs — matched before falling back to description keywords.
     _ARDUINO_VIDS = frozenset({
@@ -155,8 +156,11 @@ class ArduinoController:
             True if command completed successfully, False otherwise.
         """
         if not self.port or not self.port.is_open:
-            log.error("Cannot send command, Arduino not connected.")
-            return False
+            log.warning("ArduinoController: port closed before send — attempting reconnect...")
+            self._reconnect()
+            if not self.port or not self.port.is_open:
+                log.error("Cannot send command, Arduino not connected.")
+                return False
 
         with self.serial_lock:
             try:
@@ -220,8 +224,11 @@ class ArduinoController:
             True if command was sent, False if not connected.
         """
         if not self.port or not self.port.is_open:
-            log.error("Cannot send command, Arduino not connected.")
-            return False
+            log.warning("ArduinoController: port closed before async send — attempting reconnect...")
+            self._reconnect()
+            if not self.port or not self.port.is_open:
+                log.error("Cannot send command, Arduino not connected.")
+                return False
 
         with self.serial_lock:
             full_cmd = f"{cmd}\n"

@@ -23,7 +23,7 @@ long  maxTravelCounts = (long)(MAX_TRAVEL_INCHES_DEFAULT * COUNTS_PER_INCH);
 #define DOCK_POSITION_INCHES 14.0
 
 // ---- Sauce positions ----
-#define SAUCE_START_INCHES  1.65
+#define SAUCE_START_INCHES  1.90
 #define SAUCE_END_INCHES    6.3
 float sauceSpeed = 1.0;
 
@@ -297,6 +297,7 @@ void loop() {
         Serial.print("[SAUCE] Dispensing started at ");
         Serial.print(encoderCount / COUNTS_PER_INCH, 3);
         Serial.println(" in");
+        delay(1000);  // let extruder prime for 1 s before gantry sweeps
         startMove(SAUCE_END_INCHES, sauceSpeed, MOVE_CONTEXT_SAUCE2);
 
       } else {

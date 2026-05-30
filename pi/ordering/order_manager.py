@@ -166,9 +166,9 @@ class OrderManager:
         # Extruder always runs at medium speed; gantry sweep speed varies by level
         extruder_speed = "medium"
         level_to_sweep_ips = {
-            "light":  5.0,
-            "medium": 3.0,
-            "heavy":  1.0,
+            "light":  10.0,
+            "medium": 5.0,
+            "heavy":  3.0,
         }
         sweep_speed_ips = level_to_sweep_ips.get(level, 2.5)
 
@@ -191,6 +191,7 @@ class OrderManager:
         time.sleep(1.0)
         log.info("Step 5: Cylinder DROP")
         self._conveyor.cylinder_drop()
+        time.sleep(1.0)
 
         # ═══════════════════════════════════════════════════════════════════════
         # STEPS 6-8: HEATING & MOVE TO SAUCE (Conveyor Controller)
@@ -203,7 +204,7 @@ class OrderManager:
         # Step 7: Heat lamp on for 10 seconds
         log.info("Step 7: Lamp ON (10 seconds)")
         self._conveyor.lamp_on()
-        time.sleep(10.0)
+        time.sleep(5.0)
         self._conveyor.lamp_off()
         log.info("Step 7: Lamp OFF")
 
