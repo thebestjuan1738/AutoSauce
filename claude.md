@@ -1,6 +1,7 @@
 # AutoSauce
 
-Raspberry Pi-based automated sauce dispensing system. A touchscreen kiosk that lets users select sauce coverage level (light/medium/heavy), then automates a multi-actuator sequence to dispense sauce onto hotdogs on a conveyor belt.
+Raspberry Pi-based automated sauce dispensing system. A touchscreen kiosk that lets users select sauce coverage level (ligh
+t/medium/heavy), then automates a multi-actuator sequence to dispense sauce onto hotdogs on a conveyor belt.
 
 ## Important Guidelines
 
