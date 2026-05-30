@@ -22,7 +22,7 @@ from pi.utils.logger import log
 # ── Driver toggle ──────────────────────────────────────────────────────────────
 # True  → mock drivers (no hardware needed, runs on any machine)
 # False → real GPIO drivers (Pi only, hardware must be wired and VESC configured)
-USE_MOCK = True
+USE_MOCK = False
 
 # True → use real VESCGantry (NEO rev via USB VESC) even when USE_MOCK is True.
 # Everything else stays mocked — lets you test the gantry motor in isolation.
@@ -33,15 +33,6 @@ USE_VESC_GANTRY = os.environ.get("USE_VESC_GANTRY", "1") != "0"
 
 
 def build_order_manager() -> OrderManager:
-    from pi.motion.mock_drivers import MockGantry, MockExtruder, MockConveyor
-    from pi.motion.gripper import GPIOGripper
-    return OrderManager(
-        gantry=MockGantry(),
-        gripper=GPIOGripper(),
-        extruder=MockExtruder(),
-        conveyor=MockConveyor(),
-    )
-
     # Lazy import so the serial port is only opened when actually needed.
     import serial.serialutil
     from pi.motion.vesc_gantry import VESCGantry

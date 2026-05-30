@@ -17,7 +17,7 @@ const int extruderB = 21;  // INT2
 //
 // ====== PLUNGER SENSOR PIN ======
 //
-const int plungerPin = 52;  // LOW when plunger is hit
+const int plungerPin = 48;  // LOW when plunger is hit
 
 //
 // ====== ENCODER COUNTS ======
@@ -91,8 +91,10 @@ void ISR_extruderB() {
 long homeMotor(Servo &esc, volatile long &ticks, int strongPWM) {
   long lastTicks = ticks;
   unsigned long lastMoveTime = millis();
+  unsigned long startTime    = millis();
+  const unsigned long MAX_HOME_MS = 8000;  // hard cap: stop and declare home after 8 s
 
-  while (true) {
+  while (millis() - startTime < MAX_HOME_MS) {
     esc.writeMicroseconds(strongPWM);
 
     if (ticks != lastTicks) {
@@ -107,6 +109,11 @@ long homeMotor(Servo &esc, volatile long &ticks, int strongPWM) {
       return 0;
     }
   }
+  // Stall detection never fired (encoder noise) — stop anyway and treat as home.
+  esc.writeMicroseconds(GOBILDA_STOP);
+  delay(200);
+  ticks = 0;
+  return 0;
 }
 
 //
@@ -132,7 +139,48 @@ void home_grabber() {
 
 void home_extruder() {
   Serial.println("Homing extruder...");
-  homeMotor(escExtruder, extruderTicks, 1700);
+
+  noInterrupts();
+  long startTicks = extruderTicks;
+  interrupts();
+  Serial.print("Extruder ticks at start: ");
+  Serial.println(startTicks);
+
+  // Pre-run: drive motor for 400ms before starting stall detection so the ESC
+  // has time to engage and produce encoder ticks before the stall timer begins.
+  escExtruder.writeMicroseconds(1675);
+  delay(400);
+
+  long lastTicks = extruderTicks;
+  unsigned long lastMoveTime = millis();
+  unsigned long startTime    = millis();
+
+  while (millis() - startTime < 15000) {
+    escExtruder.writeMicroseconds(1675);
+
+    noInterrupts();
+    long t = extruderTicks;
+    interrupts();
+
+    if (t != lastTicks) {
+      lastTicks = t;
+      lastMoveTime = millis();
+    }
+
+    if (millis() - lastMoveTime > 8000) {
+      break;
+    }
+  }
+
+  escExtruder.writeMicroseconds(GOBILDA_STOP);
+  delay(600);  // longer settle so motor fully stops before zeroing
+
+  noInterrupts();
+  long endTicks = extruderTicks;
+  extruderTicks = 0;
+  interrupts();
+  Serial.print("Extruder ticks at end (before zero): ");
+  Serial.println(endTicks);
   Serial.println("Extruder homed.");
 }
 
@@ -158,20 +206,71 @@ void open_grabber() {
 
 void open_extruder() {
   Serial.println("Opening extruder...");
-  while (extruderTicks < 0) {
-    escExtruder.writeMicroseconds(1850);
+
+  escExtruder.writeMicroseconds(1675);
+  delay(400);
+
+  long lastTicks = extruderTicks;
+  unsigned long lastMoveTime = millis();
+  unsigned long startTime    = millis();
+
+  while (millis() - startTime < 15000) {
+    escExtruder.writeMicroseconds(1675);
+
+    noInterrupts();
+    long t = extruderTicks;
+    interrupts();
+
+    if (t != lastTicks) {
+      lastTicks = t;
+      lastMoveTime = millis();
+    }
+
+    if (millis() - lastMoveTime > 8000) {
+      break;
+    }
   }
+
   escExtruder.writeMicroseconds(GOBILDA_STOP);
-  delay(100);
+  delay(600);
+
+  noInterrupts();
+  extruderTicks = 0;
+  interrupts();
   Serial.println("Extruder open.");
   Serial.println("OPENEXT_DONE");
 }
 
 void start_meet_plunger() {
   Serial.println("Moving extruder to plunger contact...");
-  Serial.print("Using PWM: ");
-  Serial.println(MEET_PLUNGER_SPEED);
-  Serial.println("Type STOP at any time to abort.");
+
+  // Gear-lock detection: after HOMEEXT/OPENEXT the gears can seat locked at the top.
+  // Drive at normal speed for up to 2 s; if no encoder movement detected,
+  // apply a double-power burst for 500 ms to break the gears free.
+  noInterrupts();
+  long initTicks = extruderTicks;
+  interrupts();
+
+  escExtruder.writeMicroseconds(MEET_PLUNGER_SPEED);
+  unsigned long initStart = millis();
+  bool moved = false;
+
+  while (millis() - initStart < 2000) {
+    noInterrupts();
+    long t = extruderTicks;
+    interrupts();
+    if (t != initTicks) { moved = true; break; }
+  }
+
+  if (!moved) {
+    // double the offset from centre: 1500 - 2*(1500-1350) = 1200
+    const int burstPWM = 1500 - 2 * (1500 - MEET_PLUNGER_SPEED);
+    Serial.print("Gear lock detected — burst at PWM ");
+    Serial.println(burstPWM);
+    escExtruder.writeMicroseconds(burstPWM);
+    delay(500);
+  }
+
   meetPlungerActive = true;
   plungerLowCount   = 0;
 }
@@ -402,6 +501,27 @@ void loop() {
       Serial.print("Extruder ticks at contact: ");
       Serial.println(e);
       Serial.println("PLUNGER_DONE");
+    }
+  }
+
+  // --- EXTRUDER STATUS LOG (while dispensing) ---
+  if (extruding) {
+    static unsigned long lastExtPrint = 0;
+    static long          lastExtTicks = 0;
+    unsigned long now = millis();
+    unsigned long dt  = now - lastExtPrint;
+    if (dt >= 100) {
+      noInterrupts();
+      long ticks = extruderTicks;
+      interrupts();
+      float speed = (dt > 0) ? (ticks - lastExtTicks) * 1000.0 / dt : 0.0;
+      Serial.print("[EXT] Ticks: ");
+      Serial.print(ticks);
+      Serial.print("  Speed: ");
+      Serial.print(speed, 1);
+      Serial.println(" t/s");
+      lastExtTicks = ticks;
+      lastExtPrint = now;
     }
   }
 

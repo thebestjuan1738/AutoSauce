@@ -43,12 +43,11 @@ from dataclasses import dataclass
 from enum import Enum, auto
 from typing import Optional
 
-from pi.ordering.sauce_config import get_profile, POSITIONS, DISPENSE_SWEEP_END_MM
+from pi.ordering.sauce_config import get_profile, POSITIONS
 
-# How many seconds before the gantry reaches end to stop extrusion.
-# Tune this to compensate for extruder coast/lag.
-EXTRUDER_EARLY_STOP_S = 0.4
-from pi.motion.vesc_gantry import SWEEP_MAX_DUTY
+# Firmware pauses this long after sending DISPENSING before starting the gantry sweep,
+# giving the extruder time to prime. Must match the delay(1000) in GantryCode.ino.
+SAUCE_DISPENSE_PREDELAY_S = 1.0
 from pi.utils.logger import log
 
 
@@ -167,9 +166,9 @@ class OrderManager:
         # Extruder always runs at medium speed; gantry sweep speed varies by level
         extruder_speed = "medium"
         level_to_sweep_ips = {
-            "light":  4.0,
-            "medium": 3.0,
-            "heavy":  1.0,
+            "light":  10.0,
+            "medium": 5.0,
+            "heavy":  3.0,
         }
         sweep_speed_ips = level_to_sweep_ips.get(level, 2.5)
 
@@ -192,6 +191,7 @@ class OrderManager:
         time.sleep(1.0)
         log.info("Step 5: Cylinder DROP")
         self._conveyor.cylinder_drop()
+        time.sleep(1.0)
 
         # ═══════════════════════════════════════════════════════════════════════
         # STEPS 6-8: HEATING & MOVE TO SAUCE (Conveyor Controller)
@@ -204,7 +204,7 @@ class OrderManager:
         # Step 7: Heat lamp on for 10 seconds
         log.info("Step 7: Lamp ON (10 seconds)")
         self._conveyor.lamp_on()
-        time.sleep(10.0)
+        time.sleep(5.0)
         self._conveyor.lamp_off()
         log.info("Step 7: Lamp OFF")
 
@@ -234,45 +234,29 @@ class OrderManager:
         else:
             log.info("Steps 9+11: Skipping dock and meet plunger — plunger already at contact")
 
-        # Step 12: Gantry moves to sauce start (dispense position)
-        log.info("Step 12: Gantry → sauce start (dispense position)")
-        self._gantry.move_to(POSITIONS["dispense"])
-
         # ═══════════════════════════════════════════════════════════════════════
-        # STEPS 13-14: CONCURRENT DISPENSING
+        # STEPS 12-13: CONCURRENT DISPENSING (firmware SAUCE command)
         # ═══════════════════════════════════════════════════════════════════════
 
-        # Step 13: Start concurrent operations
-        log.info(f"Step 13: Starting concurrent dispense (speed={extruder_speed})")
-
-        # Start conveyor zigzag
+        # Step 12: Start zigzag then trigger SAUCE.
+        # Firmware phase 1: gantry reverses to sauce start (1.65 in).
+        # Firmware phase 2: gantry sweeps forward to sauce end (6.3 in) at
+        # sweep_speed_ips — fires on_dispense_start callback at phase 2 start.
+        log.info("Step 12: Conveyor → start zigzag")
         self._conveyor.start_zigzag()
 
-        # Start extruder dispensing (always slow)
-        self._extruder.dispense(speed=extruder_speed)
+        def on_dispense_start():
+            self._extruder.dispense(speed=extruder_speed)
+            log.info("Extruder started — will stop when gantry reaches sauce end")
 
-        # Schedule extruder stop slightly before the gantry reaches its end position
-        # so sauce doesn't over-run past the hotdog.
-        sweep_distance_in = (DISPENSE_SWEEP_END_MM - POSITIONS["dispense"]) / 25.4
-        sweep_duration_s = sweep_distance_in / sweep_speed_ips
-        early_stop_delay_s = max(0.0, sweep_duration_s - EXTRUDER_EARLY_STOP_S)
-        log.info(
-            f"Step 13: Extruder will stop in {early_stop_delay_s:.2f}s "
-            f"({EXTRUDER_EARLY_STOP_S}s before estimated gantry end)"
-        )
-        stop_timer = threading.Timer(early_stop_delay_s, self._extruder.stop_dispense)
-        stop_timer.start()
-
-        # Gantry sweeps to sauce end at level-dependent speed (this blocks until complete)
-        log.info(f"Step 13: Gantry sweeping to sauce end at {sweep_speed_ips} in/s...")
+        log.info(f"Step 12: Gantry SAUCE at {sweep_speed_ips:.2f} in/s")
         try:
-            self._gantry.move_to(DISPENSE_SWEEP_END_MM, speed_ips=sweep_speed_ips)
+            self._gantry.sauce(sweep_speed_ips, on_dispense_start=on_dispense_start)
         finally:
-            stop_timer.cancel()          # no-op if it already fired
-            self._extruder.stop_dispense()  # ensure stopped regardless
+            self._extruder.stop_dispense()
 
-        # Step 14: When gantry reaches end, stop zigzag
-        log.info("Step 14: Gantry reached end — stopping zigzag")
+        # Step 13: Gantry reached sauce end — stop zigzag
+        log.info("Step 13: Gantry reached sauce end — stopping zigzag")
         self._conveyor.stop_zigzag()
 
         # ═══════════════════════════════════════════════════════════════════════
