@@ -376,10 +376,7 @@ dos2unix ~/AutoSauce/ui/launch.sh
 ## SSH into the Raspberry Pi
 
 ### Credentials
-```
-username: saucemachine
-password: me424
-```
+Username and password are configured during Raspberry Pi OS setup.
 
 ### 1. Find the Pi's IP address
 On the Pi, run:
@@ -389,12 +386,12 @@ hostname -I
 On school WiFi the IP may change between sessions. If SSH stops working,
 plug a monitor into the Pi and run `hostname -I` again. Alternatively:
 ```bash
-ssh saucemachine@raspberrypi.local
+ssh <username>@raspberrypi.local
 ```
-Its IP should be 172.28.85.104
+
 ### 2. Connect
 ```bash
-ssh saucemachine@<ip>
+ssh <username>@<pi-ip-address>
 ```
 First time only you'll see a fingerprint warning — type `yes` to continue.
 
@@ -474,7 +471,7 @@ tmux attach
 ### 8. Transfer files to the Pi
 From your Mac (not inside SSH):
 ```bash
-scp -r AutoSauce/ saucemachine@<ip>:~/AutoSauce
+scp -r AutoSauce/ <username>@<pi-ip-address>:~/AutoSauce
 ```
 For day-to-day work, push to GitHub and pull on the Pi:
 ```bash
